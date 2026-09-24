@@ -21,3 +21,4 @@ releases/
 .env
 /recordings/
 /exports/
+.multicam-demo/

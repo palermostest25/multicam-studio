@@ -51,6 +51,12 @@ python3 -m venv .venv
 
 The standalone editor is `multicam_edit.py`; run `.venv/bin/python multicam_edit.py --help` for its options. The browser interface runs on a local server. A plain HTML file cannot render video by itself.
 
+## Try the interface without installing anything
+
+`demo.py` runs the whole interface with only Python's standard library. There's no virtual environment, pip, NumPy, SciPy or FFmpeg. Double-click **Start Demo.bat** on Windows, or run `python demo.py --open` (`py demo.py --open` on Windows). It opens on port 8766 with a sample project: three placeholder camera files and a generated audio bounce.
+
+Probing, framing previews, waveforms, highlight suggestions and preview plans all work, using drawn SVG frames instead of real video. Rendering, clip export and effects stop with a message instead of writing a file. Demo data lives in `.multicam-demo/`.
+
 ## Run on Windows
 
 Install Python 3.10 or newer and FFmpeg (which includes FFprobe), for example:
