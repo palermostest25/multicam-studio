@@ -65,6 +65,9 @@ git merge --no-ff upstream/main            # merge commit, never rebase
   - Optional HTTP Basic auth via `MULTICAM_PASSWORD` (any user name).
   - `/api/shutdown` returns 409, and the UI hides `.quit-row` when `config.server_mode` is true.
   - There is no random-port fallback.
+  - `/api/upload` saves into `default_folder` (the recordings folder) with `name (2).ext` de-duplication, via a hidden `.<hex>.uploading` partial file. Local mode still uses `state/uploads/<hex>/`.
+  - The setup wizard is skipped (`setup_completed=True`), since the folders come from the container.
+  - `GET /api/library` lists top-level files in the recordings and exports folders (registered download URLs, size, modified time, kind, free space). `POST /api/library/delete {path}` deletes only files directly inside those two folders, and refuses while a job is running.
 - `/api/health` is answered **before** the host, auth and token checks; the Docker healthcheck depends on it.
 - Local mode (the default) keeps the original strict loopback `Host`/`Origin` checks.
 - `setup_snapshot()` and `diagnostics()` include `server_mode`.
@@ -73,6 +76,14 @@ git merge --no-ff upstream/main            # merge commit, never rebase
 - `basename` and `dirname` in `app.js` handle both `/` and `\`, and `dirname` keeps `C:\` as a drive root.
 - Wording stays platform-neutral: "this computer", "in this browser", "your machine". Never "this Mac". Upstream keeps reintroducing "on this Mac" in draft and autosave strings, so check every merge.
 - The runtime line shows `macOS` only when `platform === 'Darwin'`.
+- **Server mode UI** (`applyServerMode()` in `app.js`, run when `config.server_mode`): no typing of server paths.
+  - `body.server-mode` class; the "04 Files" tab (`#files-tab`, `#files-page`) is shown.
+  - The output-folder labels are hidden and filled with `default_output`.
+  - The Highlights and Effects source fields are read-only, with "Server files" plus "Upload" buttons. Camera cards say "Server files".
+  - Badges read SERVER and the Quit row is hidden. `uploadFile(file,i,n,statusEl)` takes an optional status element.
+  - The Files tab (`loadLibrary`, `libraryRow`) offers Upload recordings, Download, Delete, and "Highlights →"/"Effects →" for exported videos.
+  - Local mode must look and behave exactly as upstream (no Files tab, editable paths).
+- When upstream adds a new tab, page or output field, make it work in server mode too: uploads instead of paths, outputs to `default_output`, and results downloadable.
 
 ### Docker and deployment files (ours only)
 - `Dockerfile`: `python:3.12-slim` plus Debian `ffmpeg` (which includes libx264), `pip install -r requirements.txt`, `COPY *.py ./` (every module, so new upstream files are included), `COPY web ./web`, a world-writable `/state`, `MULTICAM_*` defaults (`/media/recordings`, `/media/exports`, roots `/media`), and a healthcheck on `/api/health`. If upstream adds non-Python runtime files (for example a new data folder), add them to the Dockerfile.
@@ -145,6 +156,7 @@ Host setup: `sudo mkdir -p /opt/Docker/appdata/multicam-studio/{recordings,expor
 2. Created `ui-demo` with the stdlib-only demo.
 3. Merged upstream 1.2.0 (batch energetic highlights, new `highlights.py`). The conflicts were in `server.py` (waveform endpoint) and `app.js` (draft strings). The Dockerfile switched to `COPY *.py`, and the demo got a pure-Python `plan_clips`.
 4. Added this file.
+5. Server-mode file workflow: uploads land in recordings, a Files tab for download/delete, no server paths in the UI. Removed `.env` usage, and the compose has no sign-in (restricted to 192.168.1.10).
 
 ## App overview (unchanged from upstream)
 

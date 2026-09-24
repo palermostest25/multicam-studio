@@ -340,6 +340,7 @@ class Studio:
             self.default_output=Path(preferences.get('default_output',str(self.default_output))).expanduser().resolve()
             self.setup_completed=bool(preferences.get('completed'))
         except (OSError,ValueError,TypeError):pass
+        if remote:self.setup_completed=True  # folders come from the container configuration
         self.token=secrets.token_urlsafe(32)
         self.lock=threading.RLock();self.preview_lock=threading.Lock()
         self.jobs={};self.files={};self.file_ids={};self.active=None;self.stopping=False
@@ -532,6 +533,45 @@ class Studio:
             if str(folder) not in self.roots:self.roots.insert(0,str(folder))
         return self.setup_snapshot()
 
+    def library_folders(self):
+        return {'recordings':self.default_folder,'exports':self.default_output}
+
+    def library(self):
+        """Top-level files in the recordings and exports folders, for server mode."""
+        result={}
+        for key,folder in self.library_folders().items():
+            items=[]
+            try:entries=list(folder.iterdir()) if folder.is_dir() else []
+            except OSError:entries=[]
+            for item in entries:
+                if item.name.startswith('.') or item.name.endswith('.uploading'):continue
+                try:
+                    if not item.is_file():continue
+                    info=item.stat()
+                except OSError:continue
+                suffix=item.suffix.lower()
+                kind='video' if suffix in VIDEO_EXTS else 'audio' if suffix in AUDIO_EXTS else 'image' if suffix in ('.jpg','.png') else 'other'
+                entry=self.register(item,kind) or {}
+                items.append({**entry,'name':item.name,'path':str(item),'size':info.st_size,
+                              'modified':dt.datetime.fromtimestamp(info.st_mtime).isoformat(timespec='seconds'),'kind':kind})
+            items.sort(key=lambda x:x['modified'],reverse=True)
+            result[key]=items
+        try:free=shutil.disk_usage(self.default_output if self.default_output.is_dir() else self.state).free
+        except OSError:free=None
+        return {**result,'free_bytes':free,'recordings_folder':str(self.default_folder),'exports_folder':str(self.default_output)}
+
+    def delete_library_file(self,value):
+        path=resolved(value)
+        folders={f.expanduser().resolve() for f in self.library_folders().values()}
+        if path.parent not in folders or path.name.startswith('.') or not path.is_file():
+            raise ValueError('Only files in the recordings or exports folder can be deleted.')
+        with self.lock:
+            if self.active and self.jobs[self.active]['status'] in ('queued','running'):
+                raise ValueError('Wait for the current job to finish before deleting files.')
+            path.unlink()
+            fid=self.file_ids.pop(str(path),None)
+            if fid:self.files.pop(fid,None)
+
     def diagnostics(self):
         with self.lock:
             statuses=[{'kind':j.get('kind','edit'),'status':j['status']} for j in self.jobs.values()]
@@ -656,6 +696,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.studio.dependency_cache=None
                 return self.json_response(200,self.studio.setup_snapshot())
             if u.path=='/api/diagnostics':return self.json_response(200,self.studio.diagnostics())
+            if u.path=='/api/library':return self.json_response(200,self.studio.library())
             if u.path=='/api/browse':
                 p=resolved(query.get('path',[str(self.studio.default_folder)])[0])
                 requested=p
@@ -744,6 +785,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.json_response(200,{'ok':True})
                 threading.Thread(target=self.server.shutdown,daemon=True).start()
                 return
+            if u.path=='/api/library/delete':
+                self.studio.delete_library_file(data.get('path'));return self.json_response(200,{'ok':True})
             if u.path=='/api/folders':
                 parent=resolved(data.get('parent'));name=str(data.get('name','')).strip()
                 if not parent.is_dir():raise ValueError('Choose an existing parent folder.')
@@ -795,9 +838,13 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError('Upload a MOV, MP4 or WAV file.')
         size=int(self.headers.get('Content-Length','0'))
         if size<=0:raise ValueError('This file is empty.')
-        if size>shutil.disk_usage(self.studio.state).free-128*1024*1024:raise ValueError('Not enough disk space for this upload. Use Browse to select it without copying.')
-        folder=self.studio.state/'uploads'/secrets.token_hex(8);folder.mkdir(parents=True)
-        target=folder/name;partial=folder/(name+'.uploading')
+        if self.studio.remote:
+            # Server mode: uploads become recordings, visible in the Files tab and on the host.
+            folder=self.studio.default_folder;folder.mkdir(parents=True,exist_ok=True)
+        else:
+            folder=self.studio.state/'uploads'/secrets.token_hex(8);folder.mkdir(parents=True)
+        if size>shutil.disk_usage(folder).free-128*1024*1024:raise ValueError('Not enough disk space for this upload.')
+        partial=folder/('.'+secrets.token_hex(6)+'.uploading')
         try:
             with partial.open('wb') as f:
                 left=size
@@ -805,10 +852,14 @@ class Handler(BaseHTTPRequestHandler):
                     chunk=self.rfile.read(min(left,1024*1024))
                     if not chunk:raise ValueError('Upload interrupted.')
                     f.write(chunk);left-=len(chunk)
-            partial.replace(target)
-        except Exception:
+            with self.studio.lock:
+                # Keep existing recordings: "set.mov" becomes "set (2).mov".
+                target=folder/name;stem,suffix=Path(name).stem,Path(name).suffix;n=2
+                while target.exists():target=folder/f'{stem} ({n}){suffix}';n+=1
+                partial.replace(target)
+        except BaseException:
             partial.unlink(missing_ok=True);raise
-        self.json_response(201,{'path':str(target),'name':name,'size':size})
+        self.json_response(201,{'path':str(target),'name':target.name,'size':size})
     def preview(self,data):
         p=resolved(data.get('path'))
         if not p.is_file() or p.suffix.lower() not in VIDEO_EXTS:raise ValueError('Choose a camera recording first.')
