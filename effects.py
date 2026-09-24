@@ -83,7 +83,7 @@ def has_effects(c):
                 c['contrast'] != 1, c['saturation'] != 1))
 
 
-def validate_config(raw):
+def validate_config(raw, *, metadata=None):
     if not isinstance(raw, dict):
         raise ValueError('Expected clip/effect settings.')
     source = path_value(raw.get('source_path'), 'a source movie')
@@ -108,7 +108,7 @@ def validate_config(raw):
         c[key] = raw.get(key, default)
         if not isinstance(c[key], str) or c[key] not in choices:
             raise ValueError(f'Invalid {key}.')
-    meta = probe(source)
+    meta = probe(source) if metadata is None else metadata
     video = next((s for s in meta.get('streams', []) if s.get('codec_type') == 'video'), None)
     audio = next((s for s in meta.get('streams', []) if s.get('codec_type') == 'audio'), None)
     if video is None:
@@ -163,6 +163,8 @@ def validate_config(raw):
     output = output_dir / c['output_name']
     if same_file(source, output):
         raise ValueError('Output must be different from the source movie, including links to it.')
+    if output.exists() and not output.is_file():
+        raise ValueError('The output filename points to a folder. Choose another name.')
     if output.exists() and not c['overwrite']:
         raise ValueError('The output already exists. Enable overwrite or choose another name.')
     c['output_path'] = str(output)
@@ -211,7 +213,7 @@ def audio_filters(c):
     return ','.join(filters)
 
 
-def render(raw, report_path=None):
+def render(raw, report_path=None, *, progress_offset=0, total_duration=None):
     c = validate_config(raw)
     for binary in ('ffmpeg', 'ffprobe'):
         if not shutil.which(binary):
@@ -225,7 +227,7 @@ def render(raw, report_path=None):
     output.parent.mkdir(parents=True, exist_ok=True)
     report.parent.mkdir(parents=True, exist_ok=True)
     print('Processing effects...' if has_effects(c) else 'Exporting selected clip...', flush=True)
-    print(f'duration_seconds={c["render_duration"]:.6f}', flush=True)
+    print(f'duration_seconds={total_duration or c["render_duration"]:.6f}', flush=True)
     if c['preview']:
         print('Preview: first five seconds at most; the selection end fade may be outside this preview.', flush=True)
     with tempfile.TemporaryDirectory(prefix='.multicam_effects_', dir=output.parent) as tmp:
@@ -259,7 +261,7 @@ def render(raw, report_path=None):
                             elapsed = max(0, min(c['render_duration'], float(value) / 1e6))
                         except ValueError:
                             continue
-                        print(f'progress_seconds={elapsed:.6f}', flush=True)
+                        print(f'progress_seconds={progress_offset + elapsed:.6f}', flush=True)
                 code = proc.wait()
             if code:
                 raise RuntimeError('FFmpeg failed:\n' + errors.read_text(encoding='utf-8', errors='replace')[-6000:])
@@ -309,8 +311,111 @@ def render(raw, report_path=None):
             report_tmp.replace(report)
         finally:
             report_tmp.unlink(missing_ok=True)
-    print(f'progress_seconds={c["render_duration"]:.6f}', flush=True)
+    print(f'progress_seconds={progress_offset + c["render_duration"]:.6f}', flush=True)
     print(f'Done: {output}\nReport: {report}', flush=True)
+    return result
+
+
+
+def validate_batch(raw):
+    """Preflight every destination before any clip is written."""
+    if not isinstance(raw, dict):
+        raise ValueError('Expected batch highlight settings.')
+    ranges = raw.get('clips')
+    if not isinstance(ranges, list) or not 1 <= len(ranges) <= 1000:
+        raise ValueError('Select between 1 and 1,000 highlights for a batch.')
+    prefix = raw.get('output_name') or 'multicam_highlight'
+    if not isinstance(prefix, str):
+        raise ValueError('Output name must be a filename.')
+    prefix = prefix.strip()
+    if prefix.lower().endswith('.mp4'):
+        prefix = prefix[:-4]
+    if not prefix or prefix in ('.', '..') or any(c in prefix for c in '/\\\x00\r\n') or len(prefix) > 120:
+        raise ValueError('Batch filename must be 1–120 characters without a folder path.')
+    source = path_value(raw.get('source_path'), 'a source movie')
+    metadata = probe(source)
+    settings = {k: raw[k] for k in ('source_path', 'output_dir', 'overwrite', 'crf', 'preset') if k in raw}
+    clips = []
+    previous_end = 0
+    for index, item in enumerate(ranges, 1):
+        if not isinstance(item, dict):
+            raise ValueError('Every highlight needs a start and end time.')
+        start = numeric(item.get('start'), 'Highlight start', 0)
+        end = numeric(item.get('end'), 'Highlight end', 0)
+        if start < previous_end - .000001:
+            raise ValueError('Highlights must be in time order without overlaps.')
+        previous_end = end
+        milliseconds = round(start * 1000)
+        seconds, millis = divmod(milliseconds, 1000)
+        minutes, seconds = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        name = f'{prefix}_{index:03d}_{hours:02d}-{minutes:02d}-{seconds:02d}-{millis:03d}.mp4'
+        clips.append(validate_config({**settings, 'start': start, 'end': end, 'output_name': name}, metadata=metadata))
+    first = clips[0]
+    manifest = Path(first['output_dir']) / (prefix + '_highlights.json')
+    if same_file(source, manifest) or any(same_file(Path(c['output_path']), manifest) for c in clips):
+        raise ValueError('The batch manifest must be separate from the movie files.')
+    if manifest.exists() and (not first['overwrite'] or not manifest.is_file()):
+        raise ValueError('The batch manifest already exists. Choose another filename or enable overwrite.')
+    return {**settings, 'source_path': str(source), 'output_dir': first['output_dir'],
+            'output_name': prefix, 'overwrite': first['overwrite'], 'batch': True,
+            'clips': [{'start': c['start'], 'end': c['end']} for c in clips],
+            'clip_configs': clips, 'manifest_path': str(manifest),
+            'render_duration': sum(c['render_duration'] for c in clips)}
+
+
+def write_json_atomic(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile('w', prefix='.highlight-report-', suffix='.json',
+                                     dir=path.parent, delete=False, encoding='utf-8') as handle:
+        temporary = Path(handle.name)
+        json.dump(value, handle, indent=2)
+        handle.write('\n')
+    try:
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def render_batch(raw, report_path=None):
+    c = validate_batch(raw)
+    manifest = Path(c['manifest_path'])
+    report = Path(report_path).expanduser().resolve() if report_path else manifest
+    if same_file(report, Path(c['source_path'])) or any(same_file(report, Path(x['output_path'])) for x in c['clip_configs']):
+        raise ValueError('The batch report must be separate from the movie files.')
+    if report != manifest and report.exists() and not c['overwrite']:
+        raise ValueError('The batch report already exists. Choose another name or enable overwrite.')
+    result = {'type': 'highlights', 'status': 'rendering', 'source_path': c['source_path'],
+              'clip_count': len(c['clips']), 'completed_count': 0,
+              'duration_seconds': c['render_duration'], 'clips': [],
+              'outputs': {'videos': [], 'report': str(manifest)}}
+    def save():
+        write_json_atomic(manifest, result)
+        if report != manifest:
+            write_json_atomic(report, result)
+    save()
+    progress = 0
+    try:
+        with tempfile.TemporaryDirectory(prefix='.multicam-batch-', dir=c['output_dir']) as folder:
+            for index, clip in enumerate(c['clip_configs'], 1):
+                print(f'Batch clip {index}/{len(c["clips"])}', flush=True)
+                rendered = render(clip, Path(folder) / f'{index}.json',
+                                  progress_offset=progress, total_duration=c['render_duration'])
+                progress += rendered['duration_seconds']
+                result['outputs']['videos'].append({'path': rendered['outputs']['video'],
+                    'start': clip['start'], 'end': clip['end']})
+                result['clips'].append({'index': index, 'start': clip['start'], 'end': clip['end'],
+                                        'path': rendered['outputs']['video']})
+                result['completed_count'] = index
+                save()
+        result['status'] = 'rendered'
+    except BaseException as exc:
+        result['status'] = 'cancelled' if isinstance(exc, KeyboardInterrupt) else 'failed'
+        result['error'] = 'Cancelled. Completed clips have been kept.' if isinstance(exc, KeyboardInterrupt) else str(exc)
+        raise
+    finally:
+        save()
+    print(f'Done: {result["completed_count"]} highlights. Manifest: {manifest}', flush=True)
     return result
 
 
@@ -323,7 +428,7 @@ def main():
     if hasattr(signal, 'SIGBREAK'):
         signal.signal(signal.SIGBREAK, signal.default_int_handler)
     raw = json.loads(args.config.read_text(encoding='utf-8'))
-    render(raw, args.report_json)
+    (render_batch if raw.get('batch') else render)(raw, args.report_json)
 
 
 if __name__ == '__main__':
