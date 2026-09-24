@@ -81,29 +81,34 @@ py -3 -m venv .venv
 
 The Docker image serves the same web interface to other machines, so you can run it on a home server or NAS and open it from any browser. Renders run inside the container with its own FFmpeg.
 
-1. Create two folders on the host, one for recordings and one for exports, owned by the user that should own exported files (usually UID/GID 1000).
-2. In Arcane, create a new project (stack) from [`docker-compose.yml`](docker-compose.yml) and set these environment values (see [`.env.example`](.env.example)):
+1. Create the folders on the host and give them to the user the studio runs as (uid/gid 1000 by default):
 
-   | Variable | Purpose |
+   ```sh
+   sudo mkdir -p /opt/Docker/appdata/multicam-studio/{recordings,exports,state}
+   sudo chown -R 1000:1000 /opt/Docker/appdata/multicam-studio
+   ```
+
+2. In Arcane, create a new project (stack) from [`docker-compose.yml`](docker-compose.yml). All settings are written directly in that file, with no `.env` file. Edit them there:
+
+   | Setting | Purpose |
    | --- | --- |
-   | `RECORDINGS_DIR` | Host folder with your camera recordings and WAV bounces, shown as `/media/recordings` |
-   | `EXPORTS_DIR` | Host folder for finished videos, shown as `/media/exports` |
-   | `PUID` / `PGID` | User and group the studio runs as; owner of exported files |
-   | `MULTICAM_PASSWORD` | Password for the browser sign-in (any user name). Strongly recommended |
-   | `MULTICAM_ALLOWED_HOSTS` | Optional comma-separated host names or IPs allowed in the address bar, such as `studio.lan,192.168.1.20` |
-   | `MULTICAM_PORT` | Host port, 8765 by default |
+   | `user` | uid:gid the studio runs as; owner of exported files |
+   | `ports` | `4067:8765` publishes the studio on host port 4067 |
+   | `MULTICAM_PASSWORD` | Password for the browser sign-in (any user name). Change it |
+   | `MULTICAM_ALLOWED_HOSTS` | Optional comma-separated host names or IPs allowed in the address bar |
+   | `volumes` | Recordings (`/media/recordings`), exports (`/media/exports`) and app state (`/state`) |
 
-3. Deploy, then open `http://<server>:8765`.
+3. Deploy, then open `http://<server>:4067`.
 
 The compose file uses `ghcr.io/palermostest25/multicam-studio:latest`, which the included GitHub Actions workflow builds for amd64 and arm64 on every push to `main`. The package is private until you make it public in the repository's **Packages** settings (or log Arcane in to `ghcr.io`). If the image cannot be pulled, Compose builds it from this repository instead. To run it without Compose:
 
 ```sh
 docker build -t multicam-studio .
-docker run -d --name multicam-studio --init -p 8765:8765 \
+docker run -d --name multicam-studio --init -p 4067:8765 --user 1000:1000 \
   -e MULTICAM_PASSWORD=change-me \
-  -v /srv/multicam/recordings:/media/recordings \
-  -v /srv/multicam/exports:/media/exports \
-  -v multicam-state:/state multicam-studio
+  -v /opt/Docker/appdata/multicam-studio/recordings:/media/recordings \
+  -v /opt/Docker/appdata/multicam-studio/exports:/media/exports \
+  -v /opt/Docker/appdata/multicam-studio/state:/state multicam-studio
 ```
 
 In the container the file browser only sees folders under `/media`; mount more folders there to use them. **Upload** copies a file into the container's `/state` volume, which is useful from another computer but uses server disk space. Project drafts stay in each viewer's browser. Settings → **Quit** is hidden in server mode; stop the container from Arcane instead. Anyone who can reach the port can use the studio, so set `MULTICAM_PASSWORD` and put it behind HTTPS (a reverse proxy) before exposing it beyond your home network.
