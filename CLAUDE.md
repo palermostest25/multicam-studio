@@ -17,6 +17,7 @@ Read this whole file before doing anything in this repository.
 - Also keep **`ui-demo`** up to date (see below). Push to it directly too.
 - Never force-push `main` or `ui-demo`. Use merge commits, never rebase.
 - Don't include model names or IDs in commits or files.
+- **No env files, ever.** Never create or reference `.env` or `.env.example` files, and never use `${VAR}` interpolation in compose files. Write every compose value literally in the compose file itself. The `environment:` block with literal values is fine, since it's how the image is configured.
 
 ## "Go": the upstream sync routine
 
@@ -75,7 +76,7 @@ git merge --no-ff upstream/main            # merge commit, never rebase
 
 ### Docker and deployment files (ours only)
 - `Dockerfile`: `python:3.12-slim` plus Debian `ffmpeg` (which includes libx264), `pip install -r requirements.txt`, `COPY *.py ./` (every module, so new upstream files are included), `COPY web ./web`, a world-writable `/state`, `MULTICAM_*` defaults (`/media/recordings`, `/media/exports`, roots `/media`), and a healthcheck on `/api/health`. If upstream adds non-Python runtime files (for example a new data folder), add them to the Dockerfile.
-- `.dockerignore`, `docker-compose.yml` (generic, port 8765), `.env.example`.
+- `.dockerignore`, and `docker-compose.yml`: literal values, no `.env`, no `${}`. It matches the owner's Arcane setup below (port 4067, `/opt/Docker/appdata/multicam-studio/...`) plus `build: .` as a fallback.
 - `.github/workflows/docker.yml` builds `linux/amd64,linux/arm64` and pushes `ghcr.io/palermostest25/multicam-studio` (`latest` on `main`, semver on `v*` tags, sha). Only pushes to `main` and tags trigger it.
 - `Start Multicam Studio.bat`: the Windows launcher (venv plus pip on first run, then `server.py --open`). It uses CRLF line endings and `goto` labels rather than parenthesised blocks.
 - README sections "Run on Windows" and "Run in Docker (Arcane, Portainer, Compose)". Keep them when upstream edits the README.
@@ -123,12 +124,12 @@ services:
     container_name: multicam-studio
     init: true
     restart: unless-stopped
-    user: "${PUID:-1000}:${PGID:-1000}"
+    user: "1000:1000"
     ports:
       - "4067:8765"
     environment:
-      MULTICAM_PASSWORD: ${MULTICAM_PASSWORD:?Set MULTICAM_PASSWORD}
-      MULTICAM_ALLOWED_HOSTS: ${MULTICAM_ALLOWED_HOSTS:-}
+      MULTICAM_PASSWORD: "change-me"   # the owner sets the real password in Arcane
+      # MULTICAM_ALLOWED_HOSTS: "studio.lan,192.168.1.20"
     volumes:
       - /opt/Docker/appdata/multicam-studio/recordings:/media/recordings
       - /opt/Docker/appdata/multicam-studio/exports:/media/exports
@@ -139,7 +140,7 @@ Host setup: `sudo mkdir -p /opt/Docker/appdata/multicam-studio/{recordings,expor
 
 ## History (for context)
 
-1. Added Windows support, server mode, Docker, compose, the GHCR workflow and the Windows launcher; pushed to `main`.
+1. Added Windows support, server mode, Docker, compose, the GHCR workflow and the Windows launcher; pushed to `main`. Later removed `.env.example` and all `${}` interpolation at the owner's request.
 2. Created `ui-demo` with the stdlib-only demo.
 3. Merged upstream 1.2.0 (batch energetic highlights, new `highlights.py`). The conflicts were in `server.py` (waveform endpoint) and `app.js` (draft strings). The Dockerfile switched to `COPY *.py`, and the demo got a pure-Python `plan_clips`.
 4. Added this file.

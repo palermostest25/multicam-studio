@@ -1,5 +1,5 @@
-# Multicam Studio for Docker / Arcane.
-# Open http://<server>:8765 once the container is running.
+# Multicam Studio for Docker / Arcane. Open http://<server>:4067
+# Every value is written here directly: edit this file, no .env file is used.
 services:
   multicam-studio:
     image: ghcr.io/palermostest25/multicam-studio:latest
@@ -7,19 +7,14 @@ services:
     container_name: multicam-studio
     init: true                # reaps FFmpeg processes when a render is cancelled
     restart: unless-stopped
-    user: "${PUID:-1000}:${PGID:-1000}"   # owner of the exported files
+    user: "1000:1000"         # owner of the exported files (uid:gid)
     ports:
-      - "${MULTICAM_PORT:-8765}:8765"
+      - "4067:8765"
     environment:
-      # Strongly recommended when the port is reachable from other machines.
-      MULTICAM_PASSWORD: ${MULTICAM_PASSWORD:-}
-      # Optional, comma-separated, e.g. "studio.lan,192.168.1.20".
-      MULTICAM_ALLOWED_HOSTS: ${MULTICAM_ALLOWED_HOSTS:-}
+      MULTICAM_PASSWORD: "change-me"   # browser sign-in, any user name
+      # MULTICAM_ALLOWED_HOSTS: "studio.lan,192.168.1.20"
     volumes:
-      # Create these host folders first so they belong to PUID/PGID.
-      - ${RECORDINGS_DIR:-./recordings}:/media/recordings
-      - ${EXPORTS_DIR:-./exports}:/media/exports
-      - multicam-state:/state
-
-volumes:
-  multicam-state:
+      # Create these first and chown them to the user above.
+      - /opt/Docker/appdata/multicam-studio/recordings:/media/recordings
+      - /opt/Docker/appdata/multicam-studio/exports:/media/exports
+      - /opt/Docker/appdata/multicam-studio/state:/state

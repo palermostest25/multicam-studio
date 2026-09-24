@@ -18,6 +18,5 @@ __pycache__/
 build/
 dist/
 releases/
-.env
 /recordings/
 /exports/

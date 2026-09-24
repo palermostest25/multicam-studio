@@ -15,7 +15,7 @@ COPY *.py ./
 COPY web ./web
 
 # /state holds preferences, job history, uploads and previews. It is world-writable
-# so the container can run as any user (see PUID/PGID in docker-compose.yml).
+# so the container can run as any user (see `user:` in docker-compose.yml).
 RUN mkdir -p /state /media/recordings /media/exports && chmod 1777 /state
 
 ENV PYTHONUNBUFFERED=1 \
