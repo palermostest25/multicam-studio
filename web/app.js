@@ -129,10 +129,10 @@
   $('browser-path-form').addEventListener('submit',event=>{event.preventDefault();browse($('browser-path').value);});
   $('browser-select').addEventListener('click',()=>{const target=state.browser.target;const paths=[...state.browser.selected];if(isFolderTarget(target))$(outputField(target)).value=state.browser.path;else if(sourceField(target)){$(sourceField(target)).value=paths[0]||'';if(target==='highlight')invalidateEnergyPlan();}else addFiles(target,paths);$('file-dialog').close();scheduleAutosave();});
 
-  function uploadFile(file,index,total) {
+  function uploadFile(file,index,total,status=$('upload-status')) {
     return new Promise((resolve,reject)=>{
       const xhr=new XMLHttpRequest();xhr.open('POST',`/api/upload?name=${encodeURIComponent(file.name)}`);xhr.setRequestHeader('X-Multicam-Token',window.MULTICAM_TOKEN);xhr.setRequestHeader('Content-Type','application/octet-stream');
-      xhr.upload.addEventListener('progress',event=>{const progress=event.lengthComputable?` · ${Math.round(event.loaded/event.total*100)}%`:'';$('upload-status').textContent=`Copying ${index}/${total}: ${file.name}${progress}`;});
+      xhr.upload.addEventListener('progress',event=>{const progress=event.lengthComputable?` · ${Math.round(event.loaded/event.total*100)}%`:'';status.textContent=`${state.config?.server_mode?'Uploading':'Copying'} ${index}/${total}: ${file.name}${progress}`;});
       xhr.addEventListener('load',()=>{let result;try{result=JSON.parse(xhr.responseText);}catch{return reject(new Error('Upload failed: the local server returned an invalid response.'));}if(xhr.status<200||xhr.status>=300)return reject(new Error(result.error||'Upload failed.'));resolve(result.path);});
       xhr.addEventListener('error',()=>reject(new Error('Could not upload the file. Check the local server and available disk space.')));xhr.addEventListener('abort',()=>reject(new Error('Upload cancelled.')));xhr.send(file);
     });
@@ -248,10 +248,63 @@
     const previews=report.outputs?.previews||[];for(const preview of previews){const artifact=artifacts.find(a=>a.kind==='image'&&(a.name===basename(preview.path)||a.path===preview.path));const angle=String(preview.angle);if(artifact&&!state.previewUrls[angle]){state.previewUrls[angle]=artifact.url;state.previewFiles[angle]=preview.source_path;}}
     renderPreviews();
   }
+  // Server mode (Docker): files move through the browser, never by typing server paths.
+  // Uploads become recordings on the server, exports go to its exports folder, and the
+  // Files tab downloads or deletes them.
+  function applyServerMode(){
+    document.body.classList.add('server-mode');$('files-tab').hidden=false;$('browser-eyebrow').textContent='FILES ON THE SERVER';
+    for(const row of $$('.quit-row'))row.hidden=true;
+    for(const badge of $$('.local-badge'))if(badge.id!=='files-free'&&badge.lastChild?.nodeType===Node.TEXT_NODE)badge.lastChild.textContent=badge.lastChild.textContent.replace('LOCAL','SERVER');
+    for(const id of ['highlight-source','effects-source']){$(id).readOnly=true;$(id).placeholder='Upload a movie or pick one from the server';}
+    for(const id of ['output-dir','highlight-output','effects-output']){$(id).value=state.config.default_output;$(id).closest('label').hidden=true;}
+    for(const [field,browse] of [['highlight-source','browse-highlight'],['effects-source','browse-effects']]){
+      const button=textEl('button','Upload','small quiet');button.type='button';const input=document.createElement('input');input.type='file';input.accept='.mov,.mp4';input.hidden=true;
+      const status=textEl('p','','help');status.hidden=true;$(field).closest('label').after(status);
+      button.addEventListener('click',()=>input.click());
+      input.addEventListener('change',async()=>{const file=input.files[0];input.value='';if(!file)return;if(state.uploadBusy){toast('Wait for the current upload to finish.');return;}
+        state.uploadBusy=true;setJobButtons();status.hidden=false;
+        try{const path=await uploadFile(file,1,1,status);$(field).value=path;$(field).dispatchEvent(new Event('input',{bubbles:true}));status.textContent=`${file.name} uploaded.`;scheduleAutosave();}
+        catch(error){status.textContent='Upload stopped.';showError(error);}finally{state.uploadBusy=false;setJobButtons();}});
+      $(browse).after(button,input);$(browse).textContent='Server files';
+    }
+    renderCameraCards();
+  }
+  function libraryRow(item,exportsList){
+    const row=textEl('div','','library-row');row.append(textEl('span',item.name,'library-name'));
+    row.append(textEl('small',`${bytes(item.size)} · ${new Date(item.modified).toLocaleString([], {dateStyle:'medium',timeStyle:'short'})}`));
+    const actions=textEl('div','','library-actions');
+    if(item.url){const link=textEl('a','↓ Download','small');link.href=item.url;link.download=item.name;actions.append(link);}
+    if(exportsList&&item.kind==='video'){
+      const toHighlights=textEl('button','Highlights →','small quiet');toHighlights.type='button';toHighlights.addEventListener('click',()=>{$('highlight-source').value=item.path;invalidateEnergyPlan();selectPage('highlights');});
+      const toEffects=textEl('button','Effects →','small quiet');toEffects.type='button';toEffects.addEventListener('click',()=>{$('effects-source').value=item.path;$('effects-start').value=0;$('effects-end').value='';selectPage('effects');});
+      actions.append(toHighlights,toEffects);
+    }
+    const remove=textEl('button','Delete','small danger');remove.type='button';
+    remove.addEventListener('click',async()=>{if(!confirm(`Delete ${item.name} from the server? This cannot be undone.`))return;remove.disabled=true;try{await api('/api/library/delete',{path:item.path});toast(`${item.name} deleted.`);loadLibrary();}catch(error){remove.disabled=false;showError(error);}});
+    actions.append(remove);row.append(actions);return row;
+  }
+  async function loadLibrary(){
+    if(!state.config?.server_mode)return;
+    try{const data=await api('/api/library');
+      for(const [key,host,empty] of [['recordings','files-recordings','No recordings yet. Upload your camera files and audio bounce.'],['exports','files-exports','No exports yet. Finished videos appear here.']]){
+        const list=$(host);list.replaceChildren();const items=data[key]||[];
+        if(!items.length)list.append(textEl('p',empty,'library-empty'));
+        for(const item of items)list.append(libraryRow(item,key==='exports'));
+      }
+      const free=$('files-free');free.replaceChildren(document.createElement('span'),document.createTextNode(` ${data.free_bytes==null?'SPACE UNKNOWN':bytes(data.free_bytes)+' FREE'}`));
+    }catch(error){showError(error);}
+  }
+  $('files-refresh').addEventListener('click',loadLibrary);
+  $('files-upload').addEventListener('click',()=>$('files-upload-input').click());
+  $('files-upload-input').addEventListener('change',async event=>{const files=[...event.target.files];event.target.value='';if(!files.length)return;if(state.uploadBusy){toast('Wait for the current upload to finish.');return;}
+    const status=$('files-upload-status');state.uploadBusy=true;setJobButtons();status.hidden=false;
+    try{for(let i=0;i<files.length;i++){await uploadFile(files[i],i+1,files.length,status);}status.textContent=`${files.length} file${files.length===1?'':'s'} uploaded.`;}
+    catch(error){status.textContent='Upload stopped.';showError(error);}finally{state.uploadBusy=false;setJobButtons();loadLibrary();}});
+
   async function initialize() {
     renderCameraCards();renderOverrides();updateFormat();
     try {
-      state.config=await api('/api/config');if(state.config.server_mode)for(const row of $$('.quit-row'))row.hidden=true;$('output-dir').value=state.config.default_output||state.config.default_folder||'';for(const id of ['highlight-output','effects-output'])$(id).value=$('output-dir').value;
+      state.config=await api('/api/config');$('output-dir').value=state.config.default_output||state.config.default_folder||'';for(const id of ['highlight-output','effects-output'])$(id).value=$('output-dir').value;if(state.config.server_mode)applyServerMode();
       const dependencies=state.config.dependencies||{};const missing=Object.entries(dependencies).filter(([,value])=>!value||(typeof value==='object'&&value.available===false)).map(([key])=>key);
       if(missing.length){$('dependency-warning').textContent=`Setup needed: ${missing.join(', ')}. Open Settings to check the editing tools before rendering.`;$('dependency-warning').hidden=false;}
       const result=await api('/api/jobs');const jobs=result.jobs||[];const previousEdit=jobs.find(j=>(j.kind==='edit'||!j.kind)&&j.config?.audio);if(previousEdit?.config)applyConfig(previousEdit.config);const exportedEdit=jobs.find(j=>(j.kind==='edit'||!j.kind)&&j.report?.outputs?.video);if(exportedEdit){state.latestEdit=exportedEdit.report.outputs.video;$('highlight-source').value=state.latestEdit;$('effects-source').value=state.latestEdit;}const active=jobs.find(job=>['queued','running'].includes(job.status));const latest=active||jobs[0];
@@ -269,7 +322,7 @@
     state.cameras.forEach((camera,index)=>{
       const card=textEl('div','','source-card');card.id=`source-${camera.key}`;const heading=textEl('div','','source-heading');const badge=textEl('span',camera.id,'angle-badge');badge.style.color=cameraColor(camera.id);badge.style.borderColor=cameraColor(camera.id)+'88';const name=document.createElement('input');name.className='camera-name';name.value=camera.label;name.setAttribute('aria-label',`Name for camera ${camera.id}`);name.maxLength=100;name.addEventListener('change',()=>{camera.label=name.value.trim()||camera.id;updateCameraSelectors();updateFramePicker();});const role=textEl('span',camera.id===$('main-camera').value?'MAIN':'CUTAWAY','role-badge');role.id=`role-${camera.key}`;heading.append(badge,name,role);
       if(state.cameras.length>1){const remove=textEl('button','×','icon-button');remove.type='button';remove.setAttribute('aria-label',`Remove ${camera.label}`);remove.addEventListener('click',()=>{state.cameras=state.cameras.filter(c=>c!==camera);delete state.files[camera.key];state.shotOverrides=state.shotOverrides.filter(o=>o.camera_id!==camera.id);renderCameraCards();renderOverrides();renderShotOverrides();updateFramePicker();});heading.append(remove);}
-      const files=textEl('div','','file-list');files.id=`files-${camera.key}`;const actions=textEl('div','','source-actions');const browseButton=textEl('button','Browse files','small');browseButton.type='button';browseButton.addEventListener('click',()=>openBrowser(camera.key));const uploadButton=textEl('button','Upload files','small quiet');uploadButton.type='button';const input=document.createElement('input');input.type='file';input.accept='.mov,.mp4';input.multiple=true;input.hidden=true;uploadButton.addEventListener('click',()=>input.click());input.addEventListener('change',()=>{uploadFiles(camera.key,[...input.files]);input.value='';});actions.append(browseButton,uploadButton,input);card.append(heading,files,actions);host.append(card);renderFiles(camera.key);
+      const files=textEl('div','','file-list');files.id=`files-${camera.key}`;const actions=textEl('div','','source-actions');const browseButton=textEl('button',state.config?.server_mode?'Server files':'Browse files','small');browseButton.type='button';browseButton.addEventListener('click',()=>openBrowser(camera.key));const uploadButton=textEl('button','Upload files','small quiet');uploadButton.type='button';const input=document.createElement('input');input.type='file';input.accept='.mov,.mp4';input.multiple=true;input.hidden=true;uploadButton.addEventListener('click',()=>input.click());input.addEventListener('change',()=>{uploadFiles(camera.key,[...input.files]);input.value='';});actions.append(browseButton,uploadButton,input);card.append(heading,files,actions);host.append(card);renderFiles(camera.key);
       card.addEventListener('dragover',event=>{event.preventDefault();card.classList.add('dragover');});card.addEventListener('dragleave',()=>card.classList.remove('dragover'));card.addEventListener('drop',event=>{event.preventDefault();card.classList.remove('dragover');uploadFiles(camera.key,[...event.dataTransfer.files]);});
     });updateCameraSelectors();updateFramePicker();
   }
@@ -288,7 +341,7 @@
   let cropDrag=null;const sourceCanvas=$('source-canvas');sourceCanvas.addEventListener('pointerdown',event=>{if(!state.sourceFrame||frameFor(state.selectedFrame).mode!=='crop')return;sourceCanvas.setPointerCapture(event.pointerId);cropDrag={x:event.clientX,y:event.clientY,center:[...frameFor(state.selectedFrame).center]};});sourceCanvas.addEventListener('pointermove',event=>{if(!cropDrag)return;const rect=sourceCanvas.getBoundingClientRect();const f=frameFor(state.selectedFrame),bounds=cropRectangle(1,state.sourceFrame.height/state.sourceFrame.width,{...f,center:[.5,.5]});const halfX=bounds.width/2,halfY=bounds.height/(state.sourceFrame.height/state.sourceFrame.width)/2;f.center=[Math.max(halfX,Math.min(1-halfX,cropDrag.center[0]+(event.clientX-cropDrag.x)/rect.width)),Math.max(halfY,Math.min(1-halfY,cropDrag.center[1]+(event.clientY-cropDrag.y)/rect.height))];state.framing.set(state.selectedFrame,f);loadFramingControls();});sourceCanvas.addEventListener('pointerup',()=>{cropDrag=null;});sourceCanvas.addEventListener('pointercancel',()=>{cropDrag=null;});sourceCanvas.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)||!state.selectedFrame||frameFor(state.selectedFrame).mode!=='crop')return;event.preventDefault();const f=frameFor(state.selectedFrame),step=event.shiftKey?.05:.005;f.center[0]=Math.max(0,Math.min(1,f.center[0]+(event.key==='ArrowLeft'?-step:event.key==='ArrowRight'?step:0)));f.center[1]=Math.max(0,Math.min(1,f.center[1]+(event.key==='ArrowUp'?-step:event.key==='ArrowDown'?step:0)));state.framing.set(state.selectedFrame,f);loadFramingControls();});
   $('render-frame-preview').addEventListener('click',async()=>{const path=state.selectedFrame;if(!path){showError('Add a camera recording first.');return;}const button=$('render-frame-preview');button.disabled=true;button.textContent='Rendering…';try{const camera=state.cameras.find(c=>(state.files[c.key]||[]).includes(path));const result=await api('/api/preview',{path,angle:camera.id,mode:mode(),framing:frameFor(path),time:number('frame-time')});state.previewUrls={output:result.url};state.previewFiles={output:path};renderPreviews();setTab('framing');}catch(error){showError(error);}finally{button.disabled=false;button.textContent='Check output crop ↗';}});
 
-  function selectPage(name){state.page=name;for(const page of ['edit','highlights','effects'])$(`${page}-page`).hidden=page!==name;$$('[data-page]').forEach(button=>button.setAttribute('aria-selected',String(button.dataset.page===name)));for(const w of Object.values(state.waves))w.draw();window.scrollTo({top:0,behavior:'smooth'});}
+  function selectPage(name){state.page=name;for(const page of ['edit','highlights','effects','files'])$(`${page}-page`).hidden=page!==name;if(name==='files')loadLibrary();$$('[data-page]').forEach(button=>button.setAttribute('aria-selected',String(button.dataset.page===name)));for(const w of Object.values(state.waves))w.draw();window.scrollTo({top:0,behavior:'smooth'});}
   $$('[data-page]').forEach(button=>button.addEventListener('click',()=>selectPage(button.dataset.page)));
   for(const target of ['highlight','effects','highlight-output','effects-output'])$(`browse-${target}`).addEventListener('click',()=>openBrowser(target));
   function setLatestSource(target){if(!state.latestEdit){showError('Render an edit first, or browse to an existing finished video.');return;}$(`${target}-source`).value=state.latestEdit;if(target==='highlight')loadHighlightWave();}

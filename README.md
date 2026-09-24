@@ -105,7 +105,7 @@ docker run -d --name multicam-studio --init -p 4067:8765 --user 1000:1000 \
   -v /opt/Docker/appdata/multicam-studio/state:/state multicam-studio
 ```
 
-In the container the file browser only sees folders under `/media`; mount more folders there to use them. **Upload** copies a file into the container's `/state` volume, which is useful from another computer but uses server disk space. Project drafts stay in each viewer's browser. Settings → **Quit** is hidden in server mode; stop the container from Arcane instead. Anyone who can reach the port can use the studio, so set `MULTICAM_PASSWORD` and put it behind HTTPS (a reverse proxy) before exposing it beyond your home network.
+In Docker the studio runs in **server mode**: you never type server paths. Upload recordings and bounces from your browser (camera cards, the Highlights and Effects **Upload** buttons, or the **Files** tab). They're saved in the recordings folder, and finished videos go to the exports folder automatically. The **Files** tab lists both, with **Download**, **Delete**, free disk space, and shortcuts that send an export to Highlights or Effects. **Server files** picks something already on the server. Project drafts stay in each viewer's browser. Settings → **Quit** is hidden in server mode; stop the container from Arcane instead. Anyone who can reach the port can use the studio, so set `MULTICAM_PASSWORD` and put it behind HTTPS (a reverse proxy) before exposing it beyond your home network.
 
 The same server mode works without Docker: `python server.py --host 0.0.0.0` (every option also has a `MULTICAM_…` environment variable; see `python server.py --help`).
 
