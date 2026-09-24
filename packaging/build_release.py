@@ -23,7 +23,7 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = '1.1.0'
+VERSION = '1.2.0'
 
 
 def run(args, **kwargs):
@@ -90,7 +90,7 @@ x264 source revision b35605ace3ddf7c1a5d67a2eb553f034aef41d55: GPL version 2 or 
 
 FFmpeg and x264 are separate executables invoked as subprocesses. The exact source
 archives and build instructions are distributed with this release in the matching
-Multicam-Studio-1.1.0-Sources.zip. Redistribute that archive alongside the binaries.
+Multicam-Studio-1.2.0-Sources.zip. Redistribute that archive alongside the binaries.
 It also contains the Multicam Studio source files used for this build.
 
 Official sources: https://ffmpeg.org/ and https://code.videolan.org/videolan/x264
@@ -128,7 +128,7 @@ def sources_zip(destination,work):
     with zipfile.ZipFile(destination,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as archive:
         for path in (work/'sources').iterdir():
             if path.is_file() and not path.name.startswith('._'):archive.write(path,'third-party/'+path.name)
-        for pattern in ['desktop.py','server.py','multicam_edit.py','effects.py','requirements.txt','README.md','Start Multicam Studio.command','packaging/*.py','packaging/*.sh','packaging/*.spec','packaging/*.txt','packaging/*.plist','packaging/*.md','packaging/*.icns','web/*']:
+        for pattern in ['desktop.py','server.py','multicam_edit.py','effects.py','highlights.py','requirements.txt','README.md','CHANGELOG.md','docs/*.md','tests/*.py','tests/*.cjs','Start Multicam Studio.command','packaging/*.py','packaging/*.sh','packaging/*.spec','packaging/*.txt','packaging/*.plist','packaging/*.md','packaging/*.icns','web/*']:
             for path in ROOT.glob(pattern):
                 if path.is_file() and not path.name.startswith('._'):archive.write(path,'multicam-studio/'+str(path.relative_to(ROOT)))
         for path in (ROOT/'packaging/notices').rglob('*'):

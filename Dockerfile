@@ -10,7 +10,8 @@ RUN apt-get update \
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-COPY server.py multicam_edit.py effects.py ./
+# Every module, so new ones from upstream are included automatically.
+COPY *.py ./
 COPY web ./web
 
 # /state holds preferences, job history, uploads and previews. It is world-writable

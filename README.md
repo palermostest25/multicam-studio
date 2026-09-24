@@ -8,8 +8,8 @@ A local editor for multicamera DJ recordings, as a macOS app, from source on mac
 
 | Your Mac | Installer |
 | --- | --- |
-| Apple silicon (M1 and later) | `Multicam-Studio-1.1.0-macOS-arm64.dmg` |
-| Intel | `Multicam-Studio-1.1.0-macOS-x86_64.dmg` |
+| Apple silicon (M1 and later) | `Multicam-Studio-1.2.0-macOS-arm64.dmg` |
+| Intel | `Multicam-Studio-1.2.0-macOS-x86_64.dmg` |
 
 Open the DMG, drag **Multicam Studio** into **Applications**, and open it. The setup wizard helps you choose recordings and export folders. Python, NumPy, SciPy, FFmpeg and FFprobe are included. Editing works locally without internet or a Terminal window.
 
@@ -31,7 +31,8 @@ The apps and DMGs are **Developer ID signed, without Apple notarization**. If ma
 - A selectable main camera, adjustable hold lengths, primary-camera share and random seed.
 - Fixed framing for individual clips, with a draggable full-picture crop preview.
 - Audio playback, waveform selection and manual camera/part intervals.
-- Energy-based highlight suggestions, manual clip export, fades, bounce and visual styles.
+- Batch energetic highlights across the full recording, with adjustable approximate clip length, selection controls and separate MP4 exports.
+- Manual clip export, fades, bounce and six directly selectable colour styles.
 - Saved projects, draft recovery, progress, cancellation, render history and setup diagnostics.
 
 Energy suggestions use audio analysis; they do not recognize the DJ's hand movements or guarantee musical drop detection. Camera motion is not added to the main edit; bounce is an optional effect applied afterward.
@@ -107,7 +108,17 @@ The same server mode works without Docker: `python server.py --host 0.0.0.0` (ev
 
 See [release building and signing](packaging/RELEASE.md) and [Developer ID certificate setup](packaging/SIGNING-SETUP.md). Builds are separate for Apple silicon and Intel. The signing helper never submits to Apple for notarization.
 
-Version 1.1.0 passed runtime-component signature checks, real DMG/ZIP installation tests and bundled rendering tests. Native startup was checked on Apple silicon and Intel under Rosetta. Physical Intel hardware and a separate macOS 14 machine were not available for testing.
+Release checks cover runtime-component signatures, real DMG/ZIP installation copies and bundled rendering. Intel builds are checked under Rosetta. Physical Intel hardware and a separate macOS 14 machine were not available for testing.
+
+## Tests
+
+With the source dependencies and FFmpeg on your PATH:
+
+```sh
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+The tests exercise whole-recording highlight detection, approximate durations, all colour styles, real clip rendering, collision protection and retaining completed clips after cancellation.
 
 ## Third-party sources
 

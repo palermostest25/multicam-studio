@@ -228,7 +228,8 @@ The bounce must represent the same performance without rearrangements. Constant 
 
 - `multicam_edit.py`: standalone editor, sync, shot planning and 4K rendering.
 - `server.py`: local HTTP interface, preferences, job lifecycle and media streaming.
-- `effects.py`: highlight trimming and effects rendering.
+- `effects.py`: single and batch highlight export, plus effects rendering.
+- `highlights.py`: energetic highlight planning across the full recording.
 - `desktop.py`: packaged macOS application and render-worker entrypoint.
 - `web/`: editor, waveform/crop tools and setup wizard.
 - `packaging/`: repeatable native builds, dependency versions, licenses, signing and notarization procedure.
@@ -238,7 +239,14 @@ Release outputs include architecture-specific DMGs/ZIPs, checksums, a dependency
 
 ## Highlight clips and optional effects
 
-In the **Highlights** view, choose an exported movie, load its waveform, and mark a start/end time to export that moment. Suggested energetic intervals are starting points you can adjust. In **Effects**, choose a finished movie or highlight and preview or render the selected treatments. You can process a selected interval or the whole movie. This creates a separate H.264 MP4 and preserves the source dimensions, frame rate, and audio channel count. There is no playback-speed change. Setting all effects to neutral makes a plain trimmed clip.
+In **Highlights**, choose a finished MOV or MP4 and enter an **Approximate clip length** between 2 and 300 seconds. Click **Find energetic clips** to scan the whole recording. Long energetic passages are divided into separate clips near your chosen length. Adjacent peaks can share a clip; suggestions do not overlap. There is no top-20 limit. Loudness is only a suggestion, so review the moments before exporting.
+
+All suggestions are selected initially. Use **Review** to put a clip's range on the waveform, then **Play selection** to hear it. Tick individual clips or use **Select all / Select none**. Choose an output folder and filename prefix, then click **Export selected clips**. Each clip becomes a separate H.264 MP4 with a sequential number and source timestamp. A `<prefix>_highlights.json` manifest records the ranges and saved paths. Changing the source or target length requires finding clips again. You can export up to 1,000 clips per batch.
+
+Batch export checks all output names before rendering. Existing files are preserved unless **Replace existing clips and batch manifest** is enabled. Progress and cancellation apply to the whole batch; completed clips are retained if a later clip fails or you cancel. Each completed clip has an **Open in Effects** button. Manual waveform selection and **Export selection** remain available for exact start/end times; reviewing or editing a manual selection does not change the batch's suggested ranges.
+
+In **Effects**, choose a finished movie or highlight and select a colour style using the inline radio choices. These support mouse, touch, Tab and arrow keys without opening a macOS dropdown menu. Choosing a style does not start a render; click **Preview first 5 seconds** or **Export with effects** to apply it. You can process a selected interval or the whole movie. This creates a separate H.264 MP4 and preserves the source dimensions, frame rate, and audio channel count. There is no playback-speed change. Setting all effects to neutral makes a plain trimmed clip.
+
 
 Available effects are video-and-audio fade-in/out, a small camera-bounce motion, warm/cool/monochrome/vintage/vivid styles, brightness, contrast, saturation, and vignette. Bounce enlarges the picture slightly and moves the crop inside it; at full strength movement is at most 3% of the original width/height in either direction, with no exposed black edges. It is an optional effect on the finished export, independent of the original fixed camera crops.
 
