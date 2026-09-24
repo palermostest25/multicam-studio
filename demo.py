@@ -204,32 +204,57 @@ def waveform_data(path, bins=5000):
         rng = random.Random(str(path))
         peaks = [(.3+.6*abs(math.sin(i/400)))*(.7+.3*rng.random()) for i in range(bins)]
     top = max(peaks) or 1
-    peaks = [p/top for p in peaks]
-    count = len(peaks)
-    width = max(1, round(3/duration*count))
-    smooth, total = [], 0.0
-    for i, value in enumerate(peaks):  # moving average
-        total += value
-        if i >= width:
-            total -= peaks[i-width]
-        smooth.append(total/min(i+1, width))
-    threshold = sorted(smooth)[int(len(smooth)*.75)]
-    energetic, start = [], None
-    for i, value in enumerate(smooth+[0]):
-        if value >= threshold and start is None:
-            start = i
-        elif value < threshold and start is not None:
-            a = max(0, start/count*duration-2); b = min(duration, i/count*duration+2)
-            if b-a >= 4:
-                score = sum(smooth[start:i])/max(1, i-start)
-                energetic.append({'start': round(a, 3), 'end': round(min(b, a+45), 3), 'score': round(score, 3)})
-            start = None
-    distinct = []
-    for item in sorted(energetic, key=lambda x: x['score'], reverse=True):
-        if not any(item['start'] < c['end']+2 and item['end']+2 > c['start'] for c in distinct):
-            distinct.append(item)
-    return {'duration': duration, 'sample_rate': 8000, 'peaks': [round(p, 5) for p in peaks],
-            'energetic': sorted(distinct[:20], key=lambda x: x['start'])}
+    return {'duration': duration, 'sample_rate': 8000, 'peaks': [round(p/top, 5) for p in peaks], 'maximum': top}
+
+
+def plan_clips(peaks, duration, target_seconds=30, maximum=1):
+    """Pure-Python copy of highlights.plan_clips (which needs NumPy and SciPy)."""
+    if isinstance(target_seconds, bool):
+        raise ValueError('Approximate clip length must be between 2 and 300 seconds.')
+    try:
+        target = float(target_seconds)
+    except (TypeError, ValueError):
+        raise ValueError('Approximate clip length must be between 2 and 300 seconds.')
+    if not math.isfinite(target) or not 2 <= target <= 300:
+        raise ValueError('Approximate clip length must be between 2 and 300 seconds.')
+    values = [float(v) for v in peaks]
+    if not values or maximum <= 1e-6 or max(values) <= 0:
+        return []
+    count = len(values); step = duration/count
+    size = min(count, max(1, round(3/step)))
+    smooth = []
+    for i in range(count):  # centred moving average with 'nearest' edges
+        lo = i-size//2
+        window = [values[min(count-1, max(0, j))] for j in range(lo, lo+size)]
+        smooth.append(sum(window)/size)
+    if max(smooth)-min(smooth) < .015:
+        return []
+    ordered = sorted(smooth)
+    threshold = max(ordered[int(.75*(count-1))], max(smooth)*.2)
+    intervals, left, length = [], None, min(target, duration)
+    for i, value in enumerate(smooth+[-1]):
+        if value >= threshold and left is None:
+            left = i
+        elif value < threshold and left is not None:
+            right, run = i, left
+            left = None
+            if (right-run)*step < min(1, length/4):
+                continue
+            a, b = max(0, run*step-1), min(duration, right*step+1)
+            if b-a < length:
+                a = max(0, min(duration-length, (a+b-length)/2)); b = a+length
+            if intervals and a <= intervals[-1][1]:
+                intervals[-1][1] = max(b, intervals[-1][1])
+            else:
+                intervals.append([a, b])
+    clips = []
+    for a0, b0 in intervals:
+        pieces = max(1, math.floor((b0-a0)/target+.5))
+        for index in range(pieces):
+            a = a0+(b0-a0)*index/pieces; b = a0+(b0-a0)*(index+1)/pieces
+            chunk = smooth[int(a/step):max(int(a/step)+1, math.ceil(b/step))]
+            clips.append({'start': round(a, 3), 'end': round(b, 3), 'score': round(sum(chunk)/len(chunk), 3)})
+    return clips
 
 
 # ---------------------------------------------------------------- edit plan
@@ -375,7 +400,7 @@ class DemoStudio(server.Studio):
                 for n in range(1, min(total, 3)+1):
                     log(f'Rendering {n}/{total}: (demo)', stage=f'Rendering shot {n} of {total}', progress=round((n-1)/total*95, 1))
             else:
-                log('Exporting selected clip...' if job['kind'] == 'clip' else 'Processing effects...')
+                log({'clip': 'Exporting selected clip...', 'highlights': f'Exporting {len(c.get("clips", []))} highlights...'}.get(job['kind'], 'Processing effects...'))
                 for step in (10, 25, 40):
                     log(f'progress (demo) {step}%', progress=step)
             with self.lock:
@@ -464,6 +489,8 @@ class DemoHandler(server.Handler):
         if not audio.is_file():
             audio = p
         result = waveform_data(audio)
+        result['energetic'] = plan_clips(result['peaks'], result['duration'], data.get('target_seconds', 30), result['maximum'])
+        result['target_seconds'] = float(data.get('target_seconds', 30))
         result['audio_url'] = self.studio.register(audio, 'audio')['url']
         return self.json_response(200, result)
 
