@@ -1,6 +1,6 @@
 # Multicam Studio
 
-A local macOS editor for multicamera DJ recordings. Sync camera audio to a master bounce, generate a seeded edit, position fixed crops, direct important cuts on a waveform, and export highlights with optional effects.
+A local editor for multicamera DJ recordings, as a macOS app, from source on macOS, Windows or Linux, or as a Docker web service. Sync camera audio to a master bounce, generate a seeded edit, position fixed crops, direct important cuts on a waveform, and export highlights with optional effects.
 
 ## Install
 
@@ -50,6 +50,58 @@ python3 -m venv .venv
 ```
 
 The standalone editor is `multicam_edit.py`; run `.venv/bin/python multicam_edit.py --help` for its options. The browser interface runs on a local server. A plain HTML file cannot render video by itself.
+
+## Run on Windows
+
+Install Python 3.10 or newer and FFmpeg (which includes FFprobe), for example:
+
+```bat
+winget install Python.Python.3.12
+winget install Gyan.FFmpeg
+```
+
+Then double-click **Start Multicam Studio.bat**. The first run creates a `.venv` folder and installs NumPy and SciPy; later runs open the studio in your browser directly. Keep the window open while editing or rendering, and press Ctrl+C in it to stop. The file browser lists your home folder and each drive letter.
+
+To start it by hand instead:
+
+```bat
+py -3 -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python server.py --open
+```
+
+## Run in Docker (Arcane, Portainer, Compose)
+
+The Docker image serves the same web interface to other machines, so you can run it on a home server or NAS and open it from any browser. Renders run inside the container with its own FFmpeg.
+
+1. Create two folders on the host, one for recordings and one for exports, owned by the user that should own exported files (usually UID/GID 1000).
+2. In Arcane, create a new project (stack) from [`docker-compose.yml`](docker-compose.yml) and set these environment values (see [`.env.example`](.env.example)):
+
+   | Variable | Purpose |
+   | --- | --- |
+   | `RECORDINGS_DIR` | Host folder with your camera recordings and WAV bounces, shown as `/media/recordings` |
+   | `EXPORTS_DIR` | Host folder for finished videos, shown as `/media/exports` |
+   | `PUID` / `PGID` | User and group the studio runs as; owner of exported files |
+   | `MULTICAM_PASSWORD` | Password for the browser sign-in (any user name). Strongly recommended |
+   | `MULTICAM_ALLOWED_HOSTS` | Optional comma-separated host names or IPs allowed in the address bar, such as `studio.lan,192.168.1.20` |
+   | `MULTICAM_PORT` | Host port, 8765 by default |
+
+3. Deploy, then open `http://<server>:8765`.
+
+The compose file uses `ghcr.io/palermostest25/multicam-studio:latest`, which the included GitHub Actions workflow builds for amd64 and arm64 on every push to `main`. The package is private until you make it public in the repository's **Packages** settings (or log Arcane in to `ghcr.io`). If the image cannot be pulled, Compose builds it from this repository instead. To run it without Compose:
+
+```sh
+docker build -t multicam-studio .
+docker run -d --name multicam-studio --init -p 8765:8765 \
+  -e MULTICAM_PASSWORD=change-me \
+  -v /srv/multicam/recordings:/media/recordings \
+  -v /srv/multicam/exports:/media/exports \
+  -v multicam-state:/state multicam-studio
+```
+
+In the container the file browser only sees folders under `/media`; mount more folders there to use them. **Upload** copies a file into the container's `/state` volume, which is useful from another computer but uses server disk space. Project drafts stay in each viewer's browser. Settings → **Quit** is hidden in server mode; stop the container from Arcane instead. Anyone who can reach the port can use the studio, so set `MULTICAM_PASSWORD` and put it behind HTTPS (a reverse proxy) before exposing it beyond your home network.
+
+The same server mode works without Docker: `python server.py --host 0.0.0.0` (every option also has a `MULTICAM_…` environment variable; see `python server.py --help`).
 
 ## Build the macOS apps
 

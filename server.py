@@ -4,12 +4,19 @@
     python3 server.py --open --default-folder /Volumes/External/TRADES
 
 Only Python's standard library is used by this server; the editor needs NumPy,
-SciPy, ffmpeg and ffprobe. The browser and render worker run on the same Mac.
+SciPy, ffmpeg and ffprobe. By default the browser and render worker run on the
+same computer (macOS, Windows or Linux). Server mode (--host 0.0.0.0, used by the
+Docker image) serves the same interface to other machines on the network.
+
+Every option can also be set with an environment variable, such as
+MULTICAM_HOST, MULTICAM_PORT, MULTICAM_STATE_DIR, MULTICAM_DEFAULT_FOLDER,
+MULTICAM_DEFAULT_OUTPUT, MULTICAM_ROOTS, MULTICAM_ALLOWED_HOSTS and
+MULTICAM_PASSWORD.
 """
 from __future__ import annotations
 import argparse
+import base64
 import errno
-import fcntl
 import platform
 import tempfile
 import urllib.request
@@ -34,6 +41,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 import webbrowser
 
+WINDOWS = os.name == 'nt'
+if WINDOWS:
+    import msvcrt
+else:
+    import fcntl
+
 APP = Path(__file__).resolve().parent
 VERSION = '1.1.0'
 APP_ID = 'com.multicamstudio.desktop'
@@ -42,6 +55,52 @@ _RUNNING_SERVER = None
 VIDEO_EXTS = {'.mp4', '.mov'}
 AUDIO_EXTS = {'.wav'}
 PRESETS = {'ultrafast','superfast','veryfast','faster','fast','medium','slow'}
+LOOPBACK = {'127.0.0.1','localhost'}
+# Workers print file names; keep their pipes UTF-8 whatever the Windows code page.
+UTF8 = {'encoding':'utf-8','errors':'replace'}
+
+
+def default_media_folder():
+    return Path.home()/('Videos' if WINDOWS else 'Movies')
+
+
+def default_roots():
+    """Places offered by the file browser: home, drives and attached volumes."""
+    roots=[str(Path.home())]
+    if WINDOWS:
+        roots += [f'{letter}:\\' for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' if os.path.isdir(f'{letter}:\\')]
+    else:
+        for mounts in (Path('/Volumes'),Path('/media'),Path('/mnt')):
+            try:
+                if mounts.is_dir(): roots.extend(str(p) for p in sorted(mounts.iterdir()) if p.is_dir())
+            except OSError: pass
+    return roots
+
+
+def worker_environment():
+    return {**os.environ,'PYTHONUTF8':'1','PYTHONIOENCODING':'utf-8'}
+
+
+def spawn_options():
+    """Put each worker in its own process group so cancelling also stops FFmpeg."""
+    if WINDOWS:
+        return {'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {'start_new_session':True}
+
+
+def signal_worker(proc,stage):
+    """stage is 'interrupt' (clean up and exit), 'terminate' or 'kill'."""
+    if proc.poll() is not None: return
+    if WINDOWS:
+        if stage=='interrupt':
+            try:
+                os.kill(proc.pid,signal.CTRL_BREAK_EVENT);return
+            except OSError: pass  # No shared console: stop the tree immediately.
+        subprocess.run(['taskkill','/PID',str(proc.pid),'/T','/F'],capture_output=True)
+        return
+    sig={'interrupt':signal.SIGINT,'terminate':signal.SIGTERM,'kill':signal.SIGKILL}[stage]
+    try: os.killpg(proc.pid,sig)
+    except ProcessLookupError: pass
 
 
 def resolved(value):
@@ -240,7 +299,7 @@ def command_for(c, report):
     cmd=worker_command('engine')
     if c.get('cameras'):
         project=report.parent/'project.json'
-        project.write_text(json.dumps({'cameras':c['cameras'],'shot_overrides':c.get('shot_overrides',[])},indent=2))
+        project.write_text(json.dumps({'cameras':c['cameras'],'shot_overrides':c.get('shot_overrides',[])},indent=2),encoding='utf-8')
         cmd += ['--project',str(project)]
     else:
         for key in ('cam_a','cam_b'):
@@ -266,29 +325,29 @@ def command_for(c, report):
 
 
 class Studio:
-    def __init__(self,state,default_folder):
+    def __init__(self,state,default_folder,default_output=None,roots=None,remote=False,allowed_hosts=(),password=''):
         self.state=state;state.mkdir(parents=True,exist_ok=True)
         self.default_folder=default_folder
-        self.default_output=default_folder/'Exports'
+        self.default_output=default_output or default_folder/'Exports'
+        self.remote=remote;self.allowed_hosts={h.strip().lower() for h in allowed_hosts if h.strip()}
+        self.password=password
         self.setup_completed=any((state/'jobs').glob('*/job.json'))
         self.preferences_path=state/'preferences.json'
         self.dependency_cache=None
         try:
-            preferences=json.loads(self.preferences_path.read_text())
+            preferences=json.loads(self.preferences_path.read_text(encoding='utf-8'))
             self.default_folder=Path(preferences.get('default_folder',str(default_folder))).expanduser().resolve()
-            self.default_output=Path(preferences.get('default_output',str(self.default_folder/'Exports'))).expanduser().resolve()
+            self.default_output=Path(preferences.get('default_output',str(self.default_output))).expanduser().resolve()
             self.setup_completed=bool(preferences.get('completed'))
         except (OSError,ValueError,TypeError):pass
         self.token=secrets.token_urlsafe(32)
         self.lock=threading.RLock();self.preview_lock=threading.Lock()
         self.jobs={};self.files={};self.file_ids={};self.active=None;self.stopping=False
-        self.roots=[str(Path.home())]
-        volumes=Path('/Volumes')
-        if volumes.exists(): self.roots.extend(str(p) for p in sorted(volumes.iterdir()) if p.is_dir())
+        self.roots=list(roots) if roots else default_roots()
         if str(default_folder) not in self.roots: self.roots.insert(0,str(default_folder))
         for path in sorted((state/'jobs').glob('*/job.json'))[-30:]:
             try:
-                job=json.loads(path.read_text())
+                job=json.loads(path.read_text(encoding='utf-8'))
                 if job['status'] in ('queued','running'):
                     job.update(status='failed',error='The server stopped before this job finished.',stage='Interrupted')
                 job['process']=None;job['logs']=job.get('logs',[])[-500:]
@@ -309,14 +368,14 @@ class Studio:
     def save(self,job):
         data={k:v for k,v in job.items() if k!='process'}
         target=Path(job['directory'])/'job.json'
-        tmp=target.with_suffix('.tmp');tmp.write_text(json.dumps(data,indent=2));tmp.replace(target)
+        tmp=target.with_suffix('.tmp');tmp.write_text(json.dumps(data,indent=2),encoding='utf-8');tmp.replace(target)
 
     def snapshot(self,job):
         with self.lock:
             data={k:v for k,v in job.items() if k not in ('process','directory')}
             data['logs']=list(job['logs'])
             report_path=Path(job['directory'])/'report.json'
-            try: report=json.loads(report_path.read_text())
+            try: report=json.loads(report_path.read_text(encoding='utf-8'))
             except (OSError,ValueError): report=None
             data['report']=report;artifacts=[]
             if report:
@@ -365,12 +424,13 @@ class Studio:
                 if job.get('kind','edit')=='edit':
                     cmd=command_for(job['config'],directory/'report.json')
                 else:
-                    config_path=directory/'effects.json';config_path.write_text(json.dumps(job['config'],indent=2))
+                    config_path=directory/'effects.json';config_path.write_text(json.dumps(job['config'],indent=2),encoding='utf-8')
                     cmd=worker_command('effects')+['--config',str(config_path),'--report-json',str(directory/'report.json')]
                 proc=subprocess.Popen(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
-                                      text=True,bufsize=1,start_new_session=True,cwd=APP)
+                                      text=True,bufsize=1,cwd=APP,env=worker_environment(),
+                                      **UTF8,**spawn_options())
                 job.update(process=proc,status='running',stage='Synchronising' if job.get('kind','edit')=='edit' else 'Processing clip',progress=None)
-            with (directory/'render.log').open('w') as log:
+            with (directory/'render.log').open('w',encoding='utf-8') as log:
                 for line in proc.stdout:
                     line=line.rstrip();log.write(line+'\n');log.flush()
                     with self.lock:
@@ -417,17 +477,14 @@ class Studio:
             job['cancel_requested']=True;job['stage']='Cancelling'
             proc=job.get('process')
         if proc and proc.poll() is None:
-            try: os.killpg(proc.pid,signal.SIGINT)
-            except ProcessLookupError: pass
+            signal_worker(proc,'interrupt')
             def stop_later():
                 try: proc.wait(timeout=8)
                 except subprocess.TimeoutExpired:
-                    try: os.killpg(proc.pid,signal.SIGTERM)
-                    except ProcessLookupError: pass
+                    signal_worker(proc,'terminate')
                     try: proc.wait(timeout=4)
                     except subprocess.TimeoutExpired:
-                        try: os.killpg(proc.pid,signal.SIGKILL)
-                        except ProcessLookupError: pass
+                        signal_worker(proc,'kill')
             threading.Thread(target=stop_later,daemon=True).start()
 
     def dependencies(self):
@@ -450,7 +507,8 @@ class Studio:
         return {'version':VERSION,'completed':self.setup_completed,
                 'default_folder':str(self.default_folder),'default_output':str(self.default_output),
                 'dependencies':dependencies,'can_render':all(dependencies.values()),
-                'platform':platform.system(),'architecture':platform.machine()}
+                'platform':platform.system(),'architecture':platform.machine(),
+                'server_mode':self.remote}
 
     def save_setup(self, data):
         if not isinstance(data,dict):raise ValueError('Choose your setup folders.')
@@ -462,7 +520,7 @@ class Studio:
         preferences={'completed':True,'version':VERSION,'default_folder':str(folder),'default_output':str(output)}
         with self.lock:
             temporary=self.preferences_path.with_suffix('.tmp')
-            temporary.write_text(json.dumps(preferences,indent=2));temporary.replace(self.preferences_path)
+            temporary.write_text(json.dumps(preferences,indent=2),encoding='utf-8');temporary.replace(self.preferences_path)
             self.default_folder=folder;self.default_output=output;self.setup_completed=True
             if str(folder) not in self.roots:self.roots.insert(0,str(folder))
         return self.setup_snapshot()
@@ -472,7 +530,7 @@ class Studio:
             statuses=[{'kind':j.get('kind','edit'),'status':j['status']} for j in self.jobs.values()]
         return {'app':'Multicam Studio','version':VERSION,'platform':platform.platform(),
                 'architecture':platform.machine(),'python':platform.python_version(),
-                'bundled_app':bool(getattr(sys,'frozen',False)),'dependencies':self.dependencies(),
+                'bundled_app':bool(getattr(sys,'frozen',False)),'server_mode':self.remote,'dependencies':self.dependencies(),
                 'setup_completed':self.setup_completed,'job_count':len(statuses),'jobs':statuses,
                 'working_disk_free_gb':round(shutil.disk_usage(self.state).free/1e9,2)}
 
@@ -517,15 +575,43 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(body)))
         self.end_headers()
         if self.command!='HEAD':self.wfile.write(body)
+    def authorised(self):
+        password=self.studio.password
+        if not password:return True
+        auth=self.headers.get('Authorization','')
+        if auth[:6].lower()=='basic ':
+            try:
+                supplied=base64.b64decode(auth[6:].strip(),validate=True).decode('utf-8').partition(':')[2]
+                if secrets.compare_digest(supplied.encode(),password.encode()):return True
+            except (ValueError,UnicodeDecodeError):pass
+        body=json.dumps({'error':'Sign in to use Multicam Studio.'}).encode()
+        self.send_response(401);self.headers_common()
+        self.send_header('WWW-Authenticate','Basic realm="Multicam Studio", charset="UTF-8"')
+        self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(body)))
+        self.send_header('Connection','close');self.close_connection=True;self.end_headers()
+        if self.command!='HEAD':self.wfile.write(body)
+        return False
     def allowed(self,token=True):
-        host=self.headers.get('Host','')
-        port=self.server.server_port
-        hosts={f'127.0.0.1:{port}',f'localhost:{port}'}
-        if host not in hosts:
-            self.json_response(403,{'error':'This service accepts local requests only.'});return False
+        host=self.headers.get('Host','').strip().lower()
         origin=self.headers.get('Origin')
-        if origin and origin not in {f'http://{h}' for h in hosts}:
-            self.json_response(403,{'error':'Request origin is not allowed.'});return False
+        if self.studio.remote:
+            # Server mode (Docker): any address that reaches us, unless restricted,
+            # but browser requests must come from this same site.
+            name=host.rsplit(':',1)[0] if host.count(':')==1 else host
+            if not host or (self.studio.allowed_hosts and host not in self.studio.allowed_hosts
+                            and name.strip('[]') not in self.studio.allowed_hosts):
+                self.json_response(403,{'error':'This host name is not allowed. Add it to MULTICAM_ALLOWED_HOSTS.'});return False
+            sites={host}|{h.strip().lower() for h in self.headers.get('X-Forwarded-Host','').split(',') if h.strip()}
+            if origin and origin.lower() not in {f'{scheme}://{h}' for h in sites for scheme in ('http','https')}:
+                self.json_response(403,{'error':'Request origin is not allowed.'});return False
+            if not self.authorised():return False
+        else:
+            port=self.server.server_port
+            hosts={f'127.0.0.1:{port}',f'localhost:{port}'}
+            if host not in hosts:
+                self.json_response(403,{'error':'This service accepts local requests only.'});return False
+            if origin and origin not in {f'http://{h}' for h in hosts}:
+                self.json_response(403,{'error':'Request origin is not allowed.'});return False
         if token and not secrets.compare_digest(self.headers.get('X-Multicam-Token',''),self.studio.token):
             self.json_response(403,{'error':'Refresh this page to reconnect to the local server.'});return False
         return True
@@ -539,6 +625,9 @@ class Handler(BaseHTTPRequestHandler):
         self.do_GET()
     def do_GET(self):
         u=urlparse(self.path);query=parse_qs(u.query)
+        if u.path=='/api/health':
+            # Unauthenticated liveness check, also used by the Docker healthcheck.
+            return self.json_response(200,{'app_id':APP_ID,'version':VERSION,'instance_id':self.studio.token[:16]})
         if not self.allowed(token=u.path.startswith('/api/') and not u.path.startswith('/api/files/') and u.path!='/api/health'): return
         try:
             if u.path=='/api/health':
@@ -548,7 +637,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path=='/favicon.svg':
                 return self.bytes_response(b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="6" y="10" width="38" height="25" rx="4" fill="none" stroke="#e6b774" stroke-width="4"/><rect x="35" y="22" width="20" height="34" rx="4" fill="#11170f" stroke="#8dcccf" stroke-width="4"/></svg>','image/svg+xml')
             if u.path in ('/','/index.html'):
-                body=(APP/'web/index.html').read_text().replace('__MULTICAM_TOKEN__',json.dumps(self.studio.token)).encode()
+                body=(APP/'web/index.html').read_text(encoding='utf-8').replace('__MULTICAM_TOKEN__',json.dumps(self.studio.token)).encode()
                 return self.bytes_response(body,'text/html; charset=utf-8')
             if u.path in ('/app.js','/app.css','/static/app.js','/static/app.css','/static/studio.css'):
                 p=APP/'web'/u.path.rsplit('/',1)[-1]
@@ -639,6 +728,8 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data,dict):raise ValueError('Expected settings as a JSON object.')
             if u.path=='/api/setup':return self.json_response(200,self.studio.save_setup(data))
             if u.path=='/api/shutdown':
+                if self.studio.remote:
+                    return self.json_response(409,{'error':'This studio runs as a server. Stop it from Docker or your container manager.'})
                 with self.studio.lock:
                     if self.studio.active:
                         return self.json_response(409,{'error':'A job is still running. Finish or cancel it before quitting.'})
@@ -672,7 +763,7 @@ class Handler(BaseHTTPRequestHandler):
                     item={'path':str(p),'name':p.name}
                     try:
                         if not p.is_file() or p.suffix.lower() not in VIDEO_EXTS|AUDIO_EXTS:raise ValueError('Choose a MOV, MP4 or WAV file.')
-                        result=subprocess.run(['ffprobe','-v','error','-show_streams','-show_format','-of','json',str(p)],capture_output=True,text=True,timeout=20)
+                        result=subprocess.run(['ffprobe','-v','error','-show_streams','-show_format','-of','json',str(p)],capture_output=True,text=True,**UTF8,timeout=20)
                         if result.returncode:raise ValueError(result.stderr[-1000:])
                         meta=json.loads(result.stdout);v=next((s for s in meta['streams'] if s['codec_type']=='video'),{})
                         width,height=v.get('width'),v.get('height')
@@ -695,7 +786,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError('Upload a MOV, MP4 or WAV file.')
         size=int(self.headers.get('Content-Length','0'))
         if size<=0:raise ValueError('This file is empty.')
-        if size>shutil.disk_usage(self.studio.state).free-128*1024*1024:raise ValueError('Not enough disk space for this upload. Use Browse Mac to select it without copying.')
+        if size>shutil.disk_usage(self.studio.state).free-128*1024*1024:raise ValueError('Not enough disk space for this upload. Use Browse to select it without copying.')
         folder=self.studio.state/'uploads'/secrets.token_hex(8);folder.mkdir(parents=True)
         target=folder/name;partial=folder/(name+'.uploading')
         try:
@@ -730,7 +821,7 @@ class Handler(BaseHTTPRequestHandler):
         folder=self.studio.state/'previews';folder.mkdir(exist_ok=True)
         target=folder/(secrets.token_hex(12)+'.jpg')
         with self.studio.preview_lock:
-            result=subprocess.run(['ffmpeg','-v','error','-nostdin','-y','-ss',str(at),'-i',str(p),'-map','0:v:0','-an','-vf',filters,'-frames:v','1','-update','1',str(target)],capture_output=True,text=True,timeout=60)
+            result=subprocess.run(['ffmpeg','-v','error','-nostdin','-y','-ss',str(at),'-i',str(p),'-map','0:v:0','-an','-vf',filters,'-frames:v','1','-update','1',str(target)],capture_output=True,text=True,**UTF8,timeout=60)
         if result.returncode or not target.exists():raise ValueError(result.stderr[-1000:] or 'No frame at that time. Try an earlier preview time.')
         return self.json_response(200,self.studio.register(target,'image'))
 
@@ -740,9 +831,9 @@ class Handler(BaseHTTPRequestHandler):
         at=finite(data.get('time',3),'Preview time',0)
         folder=self.studio.state/'previews';folder.mkdir(exist_ok=True)
         target=folder/(secrets.token_hex(12)+'.jpg')
-        result=subprocess.run(['ffmpeg','-v','error','-nostdin','-y','-ss',str(at),'-i',str(path),'-map','0:v:0','-an','-vf',"scale=1280:1280:force_original_aspect_ratio=decrease",'-frames:v','1','-update','1',str(target)],capture_output=True,text=True,timeout=60)
+        result=subprocess.run(['ffmpeg','-v','error','-nostdin','-y','-ss',str(at),'-i',str(path),'-map','0:v:0','-an','-vf',"scale=1280:1280:force_original_aspect_ratio=decrease",'-frames:v','1','-update','1',str(target)],capture_output=True,text=True,**UTF8,timeout=60)
         if result.returncode or not target.exists():raise ValueError(result.stderr[-1000:] or 'No frame at that time. Try an earlier time.')
-        info=json.loads(subprocess.run(['ffprobe','-v','error','-show_streams','-of','json',str(target)],capture_output=True,text=True,check=True).stdout)['streams'][0]
+        info=json.loads(subprocess.run(['ffprobe','-v','error','-show_streams','-of','json',str(target)],capture_output=True,text=True,**UTF8,check=True).stdout)['streams'][0]
         item=self.studio.register(target,'image');item.update(width=info['width'],height=info['height'])
         return self.json_response(200,item)
 
@@ -752,19 +843,19 @@ class Handler(BaseHTTPRequestHandler):
         folder=self.studio.state/'waveforms';folder.mkdir(exist_ok=True)
         stat=path.stat();key=hashlib.sha256(f'v3:{path}:{stat.st_size}:{stat.st_mtime_ns}'.encode()).hexdigest()
         cached=folder/(key+'.json')
-        if cached.exists():result=json.loads(cached.read_text())
+        if cached.exists():result=json.loads(cached.read_text(encoding='utf-8'))
         else:
             import numpy as np
             from scipy.ndimage import uniform_filter1d
-            pcm=folder/(key+'-'+secrets.token_hex(4)+'.f32')
+            pcm=folder/(key+'-'+secrets.token_hex(4)+'.f32');samples=None
             try:
-                proc=subprocess.run(['ffmpeg','-v','error','-nostdin','-y','-i',str(path),'-map','0:a:0','-vn','-ac','1','-ar','8000','-c:a','pcm_f32le','-f','f32le',str(pcm)],capture_output=True,text=True,timeout=300)
+                proc=subprocess.run(['ffmpeg','-v','error','-nostdin','-y','-i',str(path),'-map','0:a:0','-vn','-ac','1','-ar','8000','-c:a','pcm_f32le','-f','f32le',str(pcm)],capture_output=True,text=True,**UTF8,timeout=300)
                 if proc.returncode or not pcm.exists() or pcm.stat().st_size<4:raise ValueError(proc.stderr[-1000:] or 'No audio available.')
                 samples=np.memmap(pcm,dtype='<f4',mode='r');duration=len(samples)/8000
                 # Use the movie timeline, excluding decoded AAC padding beyond it.
                 # Any short audio tail is represented as silence on the waveform.
                 if path.suffix.lower() in VIDEO_EXTS:
-                    meta=json.loads(subprocess.run(['ffprobe','-v','error','-show_streams','-show_format','-of','json',str(path)],capture_output=True,text=True,check=True).stdout)
+                    meta=json.loads(subprocess.run(['ffprobe','-v','error','-show_streams','-show_format','-of','json',str(path)],capture_output=True,text=True,**UTF8,check=True).stdout)
                     video=next((v for v in meta['streams'] if v['codec_type']=='video'),{})
                     declared=video.get('duration',meta.get('format',{}).get('duration'))
                     if declared not in (None,'N/A') and float(declared)>0:duration=float(declared)
@@ -793,9 +884,12 @@ class Handler(BaseHTTPRequestHandler):
                         if len(distinct)==20:break
                     energetic=sorted(distinct,key=lambda x:x['start'])
                 result={'duration':duration,'sample_rate':8000,'peaks':[round(float(x),5) for x in peaks],'energetic':energetic}
-                temporary=cached.with_name(key+'-'+secrets.token_hex(4)+'.tmp');temporary.write_text(json.dumps(result));temporary.replace(cached)
-                del samples
-            finally:pcm.unlink(missing_ok=True)
+                temporary=cached.with_name(key+'-'+secrets.token_hex(4)+'.tmp');temporary.write_text(json.dumps(result),encoding='utf-8');temporary.replace(cached)
+            finally:
+                # Windows cannot delete a file that is still memory-mapped.
+                samples=None
+                try:pcm.unlink(missing_ok=True)
+                except OSError:pass
         result['audio_url']=self.studio.register(path,'audio')['url']
         return self.json_response(200,result)
 
@@ -805,12 +899,18 @@ class InstanceLock:
     def __init__(self,state):
         state.mkdir(parents=True,exist_ok=True)
         self.path=state/'server.lock'
-        self.file=self.path.open('a+')
+        self.file=self.path.open('a+',encoding='utf-8')
+        # Windows locks block reads of the locked bytes, so lock a separate file
+        # there and keep server.lock readable by a second copy.
+        self.guard=(state/'server.lock.guard').open('a+') if WINDOWS else self.file
         self.owned=False
 
     def acquire(self):
-        try:fcntl.flock(self.file,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        except BlockingIOError:return False
+        try:
+            if WINDOWS:
+                self.guard.seek(0);msvcrt.locking(self.guard.fileno(),msvcrt.LK_NBLCK,1)
+            else:fcntl.flock(self.file,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except OSError:return False
         self.owned=True
         return True
 
@@ -837,8 +937,11 @@ class InstanceLock:
     def close(self):
         if self.owned:
             self.file.seek(0);self.file.truncate();self.file.flush()
-            fcntl.flock(self.file,fcntl.LOCK_UN)
+            if WINDOWS:
+                self.guard.seek(0);msvcrt.locking(self.guard.fileno(),msvcrt.LK_UNLCK,1)
+            else:fcntl.flock(self.file,fcntl.LOCK_UN)
         self.file.close()
+        if self.guard is not self.file:self.guard.close()
 
 
 def request_stop():
@@ -849,19 +952,36 @@ def request_stop():
         threading.Thread(target=server.shutdown,daemon=True).start()
 
 
+class StudioHTTPServer(ThreadingHTTPServer):
+    # On Windows SO_REUSEADDR lets two servers share a port; fail and pick another instead.
+    allow_reuse_address=not WINDOWS
+
+
 def main():
     global _RUNNING_SERVER
+    env=os.environ.get
     parser=argparse.ArgumentParser(description=__doc__,formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--host',choices=['127.0.0.1','localhost'],default='127.0.0.1')
-    parser.add_argument('--port',type=int,default=8765)
+    parser.add_argument('--host',default=env('MULTICAM_HOST','127.0.0.1'),
+                        help='127.0.0.1 (default) for this computer only; 0.0.0.0 to serve other machines, as in Docker')
+    parser.add_argument('--port',type=int,default=int(env('MULTICAM_PORT','8765')))
     parser.add_argument('--open',action='store_true')
-    parser.add_argument('--default-folder',type=Path,default=Path.home()/'Movies')
-    parser.add_argument('--state-dir',type=Path,default=APP/'.multicam-studio')
+    parser.add_argument('--default-folder',type=Path,default=Path(env('MULTICAM_DEFAULT_FOLDER',str(default_media_folder()))))
+    parser.add_argument('--default-output',type=Path,default=Path(env('MULTICAM_DEFAULT_OUTPUT')) if env('MULTICAM_DEFAULT_OUTPUT') else None,
+                        help='Initial export folder (default: DEFAULT_FOLDER/Exports)')
+    parser.add_argument('--state-dir',type=Path,default=Path(env('MULTICAM_STATE_DIR',str(APP/'.multicam-studio'))))
+    parser.add_argument('--root',action='append',default=[p for p in env('MULTICAM_ROOTS','').split(os.pathsep) if p],
+                        help='Folder shortcut in the file browser; repeat for several (default: home and drives)')
+    parser.add_argument('--allowed-host',action='append',default=[h for h in env('MULTICAM_ALLOWED_HOSTS','').split(',') if h.strip()],
+                        help='Server mode: only accept these host names (repeatable)')
     args=parser.parse_args()
+    password=env('MULTICAM_PASSWORD','')
     if not 0<=args.port<=65535:parser.error('Port must be between 0 and 65535.')
+    remote=args.host not in LOOPBACK
     folder=args.default_folder.expanduser().resolve()
-    if folder==Path.home()/'Movies':folder.mkdir(exist_ok=True)
+    if folder==default_media_folder():folder.mkdir(exist_ok=True)
     if not folder.is_dir():parser.error('The default folder is not available. Reconnect the drive or choose another folder.')
+    roots=[str(Path(p).expanduser().resolve()) for p in args.root]
+    output=args.default_output.expanduser().resolve() if args.default_output else None
     state=args.state_dir.expanduser().resolve()
     guard=InstanceLock(state)
     if not guard.acquire():
@@ -875,17 +995,23 @@ def main():
     studio=None
     previous_handlers={}
     try:
-        studio=Studio(state,folder)
-        try:server=ThreadingHTTPServer((args.host,args.port),Handler)
+        studio=Studio(state,folder,output,roots,remote,args.allowed_host,password)
+        try:server=StudioHTTPServer((args.host,args.port),Handler)
         except OSError as exc:
-            if exc.errno!=errno.EADDRINUSE:raise
-            # An unrelated service can occupy the default port. Ask macOS for a free one.
-            server=ThreadingHTTPServer((args.host,0),Handler)
+            if remote or exc.errno not in (errno.EADDRINUSE,getattr(errno,'WSAEADDRINUSE',10048)):raise
+            # An unrelated service can occupy the default port. Ask the system for a free one.
+            server=StudioHTTPServer((args.host,0),Handler)
         server.daemon_threads=True;server.studio=studio
         _RUNNING_SERVER=server
         url=f'http://127.0.0.1:{server.server_port}'
         guard.publish(url,studio.token[:16])
-        print(f'Multicam Studio {VERSION}: {url}\nFiles stay on this Mac.',flush=True)
+        if remote:
+            print(f'Multicam Studio {VERSION}: serving http://{args.host}:{server.server_port}',flush=True)
+            if not password:
+                print('WARNING: anyone who can reach this port can use the studio and browse its folders. '
+                      'Set MULTICAM_PASSWORD to require a password.',flush=True)
+        else:
+            print(f'Multicam Studio {VERSION}: {url}\nFiles stay on this computer.',flush=True)
         if threading.current_thread() is threading.main_thread():
             def stop_server(signum,frame):
                 request_stop()
@@ -899,9 +1025,7 @@ def main():
             studio.cancel(studio.active)
             if proc:
                 try:proc.wait(timeout=13)
-                except subprocess.TimeoutExpired:
-                    try:os.killpg(proc.pid,signal.SIGKILL)
-                    except ProcessLookupError:pass
+                except subprocess.TimeoutExpired:signal_worker(proc,'kill')
             # The worker normally commits its cancelled result immediately after exit.
             deadline=time.monotonic()+2
             while studio.active and time.monotonic()<deadline:time.sleep(.05)

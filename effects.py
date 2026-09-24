@@ -15,6 +15,7 @@ import json
 import math
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -48,9 +49,10 @@ def path_value(value, label):
 def probe(path):
     try:
         p = subprocess.run(['ffprobe', '-v', 'error', '-show_streams', '-show_format',
-                            '-of', 'json', str(path)], capture_output=True, text=True, timeout=30)
+                            '-of', 'json', str(path)], capture_output=True, text=True, timeout=30,
+                           encoding='utf-8', errors='replace')
     except FileNotFoundError:
-        raise ValueError('FFprobe is missing. Install FFmpeg first: brew install ffmpeg')
+        raise ValueError('FFprobe is missing. Install FFmpeg first (macOS: brew install ffmpeg; Windows: winget install Gyan.FFmpeg)')
     if p.returncode:
         raise ValueError('Cannot read the source movie: ' + p.stderr[-1500:])
     try:
@@ -213,7 +215,7 @@ def render(raw, report_path=None):
     c = validate_config(raw)
     for binary in ('ffmpeg', 'ffprobe'):
         if not shutil.which(binary):
-            raise ValueError(f'Missing {binary}. Install with: brew install ffmpeg')
+            raise ValueError(f'Missing {binary}. Install FFmpeg (macOS: brew install ffmpeg; Windows: winget install Gyan.FFmpeg)')
     source, output = Path(c['source_path']), Path(c['output_path'])
     report = Path(report_path).expanduser().resolve() if report_path else output.with_suffix('.json')
     if same_file(report, source) or same_file(report, output):
@@ -246,9 +248,10 @@ def render(raw, report_path=None):
                 '-progress', 'pipe:1', '-nostats', str(encoded)]
         proc = None
         try:
-            with errors.open('w') as log:
+            with errors.open('w', encoding='utf-8') as log:
                 # Inherit the worker's process group so Studio cancels FFmpeg too.
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=log, text=True)
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=log, text=True,
+                                        encoding='utf-8', errors='replace')
                 for line in proc.stdout:
                     if line.startswith('out_time_us='):
                         value = line.partition('=')[2].strip()
@@ -259,7 +262,7 @@ def render(raw, report_path=None):
                         print(f'progress_seconds={elapsed:.6f}', flush=True)
                 code = proc.wait()
             if code:
-                raise RuntimeError('FFmpeg failed:\n' + errors.read_text()[-6000:])
+                raise RuntimeError('FFmpeg failed:\n' + errors.read_text(encoding='utf-8', errors='replace')[-6000:])
         finally:
             if proc is not None and proc.poll() is None:
                 proc.terminate()
@@ -316,6 +319,9 @@ def main():
     parser.add_argument('--config', required=True, type=Path, help='JSON clip/effects settings')
     parser.add_argument('--report-json', type=Path, help='Optional output report path')
     args = parser.parse_args()
+    # Windows cancels with Ctrl+Break; handle it like Ctrl+C so scratch files are removed.
+    if hasattr(signal, 'SIGBREAK'):
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)
     raw = json.loads(args.config.read_text(encoding='utf-8'))
     render(raw, args.report_json)
 

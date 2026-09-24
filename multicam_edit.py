@@ -102,6 +102,7 @@ from pathlib import Path
 import random
 import re
 import shutil
+import signal as os_signal
 import subprocess
 import sys
 import tempfile
@@ -122,7 +123,8 @@ SYNC_TOLERANCE = 0.080  # seconds; refuse inconsistent anchor matches
 
 
 def run(cmd):
-    result = subprocess.run([str(x) for x in cmd], capture_output=True, text=True)
+    result = subprocess.run([str(x) for x in cmd], capture_output=True, text=True,
+                            encoding="utf-8", errors="replace")
     if result.returncode:
         raise RuntimeError(f"{cmd[0]} failed:\n{result.stderr[-6000:]}")
     return result.stdout
@@ -971,7 +973,8 @@ def main():
         parser.error("--b-center values must be finite and between 0 and 1")
     for binary in ("ffmpeg", "ffprobe"):
         if not shutil.which(binary):
-            raise RuntimeError(f"Missing {binary}. Install with: brew install ffmpeg")
+            raise RuntimeError(f"Missing {binary}. Install FFmpeg (macOS: brew install ffmpeg; "
+                               "Windows: winget install Gyan.FFmpeg) and make sure it is on PATH")
     folder = Path(__file__).resolve().parent
     definitions = None
     shot_overrides = []
@@ -1065,7 +1068,11 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     # Scratch beside output enables atomic final replacement on the same disk.
-    with tempfile.TemporaryDirectory(prefix=".multicam_work_", dir=output_dir) as temp:
+    # Windows cancels with Ctrl+Break; handle it like Ctrl+C so scratch files are removed.
+    if hasattr(os_signal, "SIGBREAK"):
+        os_signal.signal(os_signal.SIGBREAK, os_signal.default_int_handler)
+    with tempfile.TemporaryDirectory(prefix=".multicam_work_", dir=output_dir,
+                                     ignore_cleanup_errors=True) as temp:
         work = Path(temp)
         print(f"Main camera: {args.main_camera}; target screen time: {args.main_share:.0%}; mode: {args.mode}", flush=True)
         print("Preparing audio bounce for correlation …", flush=True)
@@ -1081,6 +1088,7 @@ def main():
         if not drops and not breakdowns and not args.no_auto_sections:
             print("Suggesting sections from audio energy; supply markers for precise drop timing.")
             drops, breakdowns = energy_sections(reference, duration)
+        del reference  # release the memory map so Windows can delete the scratch folder
         drops = [(round(a*args.fps)/args.fps, round(b*args.fps)/args.fps) for a, b in drops]
         breakdowns = [(round(a*args.fps)/args.fps, round(b*args.fps)/args.fps) for a, b in breakdowns]
         shots = make_plan(cameras, total, args.fps, drops, breakdowns, args.activity, args.seed,
