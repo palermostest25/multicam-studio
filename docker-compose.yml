@@ -11,8 +11,9 @@ services:
     ports:
       - "4067:8765"
     environment:
-      MULTICAM_PASSWORD: "change-me"   # browser sign-in, any user name
-      # MULTICAM_ALLOWED_HOSTS: "studio.lan,192.168.1.20"
+      # No sign-in: only requests addressed to this host are accepted.
+      MULTICAM_ALLOWED_HOSTS: "192.168.1.10"
+      # MULTICAM_PASSWORD: "..."   # add only if exposed beyond the home network
     volumes:
       # Create these first and chown them to the user above.
       - /opt/Docker/appdata/multicam-studio/recordings:/media/recordings

@@ -94,8 +94,8 @@ The Docker image serves the same web interface to other machines, so you can run
    | --- | --- |
    | `user` | uid:gid the studio runs as; owner of exported files |
    | `ports` | `4067:8765` publishes the studio on host port 4067 |
-   | `MULTICAM_PASSWORD` | Password for the browser sign-in (any user name). Change it |
-   | `MULTICAM_ALLOWED_HOSTS` | Optional comma-separated host names or IPs allowed in the address bar |
+   | `MULTICAM_PASSWORD` | Optional browser sign-in (any user name). Leave it out on a trusted home network |
+   | `MULTICAM_ALLOWED_HOSTS` | Host names or IPs you open the studio with, comma-separated (for example the server's LAN IP). Keep it set when there's no password |
    | `volumes` | Recordings (`/media/recordings`), exports (`/media/exports`) and app state (`/state`) |
 
 3. Deploy, then open `http://<server>:4067`.
