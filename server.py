@@ -48,7 +48,7 @@ else:
     import fcntl
 
 APP = Path(__file__).resolve().parent
-VERSION = '1.2.0'
+VERSION = '1.3.0'
 APP_ID = 'com.multicamstudio.desktop'
 DISCONNECTS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)
 _RUNNING_SERVER = None
@@ -280,7 +280,7 @@ def worker_command(kind):
     """Use explicit entrypoint dispatch in a frozen app; Python scripts in source installs."""
     if getattr(sys, 'frozen', False):
         return [sys.executable, '--' + kind]
-    return [sys.executable, '-u', str(APP / ('multicam_edit.py' if kind == 'engine' else 'effects.py'))]
+    return [sys.executable, '-u', str(APP / {'engine':'multicam_edit.py','effects':'effects.py','audio-batch':'audio_batch.py'}[kind])]
 
 
 def writable_folder(path):
@@ -379,6 +379,20 @@ class Studio:
             try: report=json.loads(report_path.read_text(encoding='utf-8'))
             except (OSError,ValueError): report=None
             data['report']=report;artifacts=[]
+            if report and report.get('type')=='audio_batch':
+                for part in report.get('parts',[]):
+                    part['artifacts']=[]
+                    detail=part.get('report')
+                    if not detail:continue
+                    for key,kind in [('video','video'),('cut_list','cut_list'),('report','report')]:
+                        target=detail.get('outputs',{}).get(key)
+                        item=self.register(target,kind) if target else None
+                        if item:part['artifacts'].append(item)
+                    for preview in detail.get('outputs',{}).get('previews',[]):
+                        item=self.register(preview['path'],'image')
+                        if item:
+                            item.update(angle=preview.get('angle'),source_path=preview.get('source_path'))
+                            part['artifacts'].append(item)
             if report:
                 outputs=report.get('outputs',{})
                 for key,kind in [('video','video'),('cut_list','cut_list'),('report','report')]:
@@ -401,9 +415,14 @@ class Studio:
             return data
 
     def start(self,raw,kind='edit'):
+        if not isinstance(raw,dict):raise ValueError('Expected job settings.')
         if not all(self.dependencies().values()):
             raise ValueError('The rendering tools are unavailable. Open Settings to check this installation.')
-        if kind=='edit':config=validate_config(raw)
+        if kind=='edit':
+            if isinstance(raw.get('audio_parts'),list) and len(raw['audio_parts'])>1:
+                import audio_batch
+                config=audio_batch.validate_config(raw)
+            else:config=validate_config(raw)
         else:
             import effects
             config=effects.validate_batch(raw) if kind=='highlights' else effects.validate_config(raw)
@@ -428,7 +447,10 @@ class Studio:
                 if job['cancel_requested']:
                     job.update(status='cancelled',stage='Cancelled');return
                 if job.get('kind','edit')=='edit':
-                    cmd=command_for(job['config'],directory/'report.json')
+                    if job['config'].get('part_configs'):
+                        config_path=directory/'audio_batch.json';config_path.write_text(json.dumps(job['config'],indent=2),encoding='utf-8')
+                        cmd=worker_command('audio-batch')+['--config',str(config_path),'--report-json',str(directory/'report.json')]
+                    else:cmd=command_for(job['config'],directory/'report.json')
                 else:
                     config_path=directory/'effects.json';config_path.write_text(json.dumps(job['config'],indent=2),encoding='utf-8')
                     cmd=worker_command('effects')+['--config',str(config_path),'--report-json',str(directory/'report.json')]
@@ -441,14 +463,19 @@ class Studio:
                     line=line.rstrip();log.write(line+'\n');log.flush()
                     with self.lock:
                         job['logs'].append(line);job['logs']=job['logs'][-1500:]
+                        excerpt=re.match(r'Audio excerpt (\d+)/(\d+):',line)
+                        if excerpt:
+                            job['excerpt_index'],job['excerpt_total']=map(int,excerpt.groups())
+                            job.update(stage=line,progress=(job['excerpt_index']-1)/job['excerpt_total']*95)
                         match=re.search(r'Rendering (\d+)/(\d+):',line)
                         if match:
                             n,total=map(int,match.groups())
-                            job.update(stage=f'Rendering shot {n} of {total}',progress=round((n-1)/total*95,1))
+                            part=job.get('excerpt_index',1);parts=job.get('excerpt_total',1)
+                            job.update(stage=(f'Excerpt {part}/{parts} · ' if parts>1 else '')+f'Rendering shot {n} of {total}',progress=round(((part-1)+(n-1)/total)/parts*95,1))
                         elif line.startswith('Batch clip '):
                             job.update(stage=line,progress=job.get('progress'))
                         elif 'Concatenating' in line:
-                            job.update(stage='Assembling video and audio',progress=97)
+                            job.update(stage='Assembling video and audio',progress=(job.get('excerpt_index',1)-.03)/job.get('excerpt_total',1)*100)
                         elif line.startswith('duration_seconds='):
                             try:job['render_duration']=float(line.split('=',1)[1])
                             except ValueError:pass

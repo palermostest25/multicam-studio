@@ -8,8 +8,8 @@ A local editor for multicamera DJ recordings, as a macOS app, from source on mac
 
 | Your Mac | Installer |
 | --- | --- |
-| Apple silicon (M1 and later) | `Multicam-Studio-1.2.0-macOS-arm64.dmg` |
-| Intel | `Multicam-Studio-1.2.0-macOS-x86_64.dmg` |
+| Apple silicon (M1 and later) | `Multicam-Studio-1.3.0-macOS-arm64.dmg` |
+| Intel | `Multicam-Studio-1.3.0-macOS-x86_64.dmg` |
 
 Open the DMG, drag **Multicam Studio** into **Applications**, and open it. The setup wizard helps you choose recordings and export folders. Python, NumPy, SciPy, FFmpeg and FFprobe are included. Editing works locally without internet or a Terminal window.
 
@@ -17,7 +17,7 @@ The apps and DMGs are **Developer ID signed, without Apple notarization**. If ma
 
 ## Make an edit
 
-1. Add the master audio bounce, then add cameras and their recording parts.
+1. Add one audio bounce or several WAV excerpts, then add cameras and their recording parts. Multiple audio excerpts produce separate videos, even when they have gaps between them.
 2. Choose landscape or portrait output, your main camera, and the cutting rhythm.
 3. Set each clip to fit or crop; drag its crop in the preview to choose the fixed framing.
 4. Use the audio waveform to place important camera changes. The remaining cuts follow your random seed.
@@ -27,6 +27,7 @@ The apps and DMGs are **Developer ID signed, without Apple notarization**. If ma
 
 - Any number of cameras, with independently synchronized recording parts and MOV/MP4 support.
 - Audio correlation, printed offsets, manual sync overrides and optional constant drift correction.
+- Separate audio-excerpt exports against shared camera recordings, with independent timing controls and sync for each excerpt. A camera that ends early is replaced by available footage.
 - Landscape 3840×2160 or portrait 2160×3840 H.264 output, with the master bounce as the only audio track.
 - A selectable main camera, adjustable hold lengths, primary-camera share and random seed.
 - Fixed framing for individual clips, with a draggable full-picture crop preview.
@@ -123,7 +124,7 @@ With the source dependencies and FFmpeg on your PATH:
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-The tests exercise whole-recording highlight detection, approximate durations, all colour styles, real clip rendering, collision protection and retaining completed clips after cancellation.
+The tests also cover camera coverage ending early, short excerpts within long recordings, and independent exports for audio excerpts with gaps. They exercise whole-recording highlight detection, approximate durations, all colour styles, real clip rendering, collision protection and retaining completed clips after cancellation.
 
 ## Third-party sources
 

@@ -398,7 +398,7 @@ def load_project(path):
     return definitions, overrides
 
 
-def synchronise(camera, reference, work, offsets, drifts, allow_drift):
+def synchronise(camera, reference, work, offsets, drifts, allow_drift, sample_cache=None):
     name = camera.path.name
     key = str(camera.path) if str(camera.path) in offsets or str(camera.path) in drifts else name
     if key in offsets:
@@ -412,18 +412,28 @@ def synchronise(camera, reference, work, offsets, drifts, allow_drift):
         if not camera.has_audio:
             raise RuntimeError(f"{name} has no audio; supply --offset {name}=SECONDS")
         print(f"Syncing {name} at {SR} Hz …", flush=True)
-        samples = extract_audio(camera.path, work / (hashlib.sha256(str(camera.path).encode()).hexdigest()[:16] + ".f32"))
+        cache_key = str(camera.path)
+        samples = sample_cache.get(cache_key) if sample_cache is not None else None
+        if samples is None:
+            samples = extract_audio(camera.path, work / (hashlib.sha256(cache_key.encode()).hexdigest()[:16] + ".f32"))
+            if sample_cache is not None:
+                sample_cache[cache_key] = samples
         length = min(12 * SR, len(samples)//3, len(reference)//3)
         if length < 2 * SR:
             raise RuntimeError(f"{name}: recording too short for reliable automatic sync; use --offset")
-        def find_matches(window):
-            starts = np.unique(np.linspace(0, len(samples)-window, 7).astype(int))
+        def find_matches(window, anchors=7):
+            # A short audio excerpt can be anywhere inside a long camera file.
+            # Sample anchors from the shorter recording, preserving x=camera,
+            # y=bounce so the offset sign and drift model remain unchanged.
+            reverse = len(reference) < len(samples)
+            shorter, longer = (reference, samples) if reverse else (samples, reference)
+            starts = np.unique(np.linspace(0, len(shorter)-window, anchors).astype(int))
             matches = []
             for start in starts:
-                bounce_start, score = match_anchor(reference, samples[start:start+window])
-                # Match the window centre: drift smears the edges of a long template.
-                x = (start + window/2) / SR
-                y = bounce_start + window/2 / SR
+                found, score = match_anchor(longer, shorter[start:start+window])
+                anchor_time = (start + window/2) / SR
+                found_time = found + window/2 / SR
+                x, y = (found_time, anchor_time) if reverse else (anchor_time, found_time)
                 matches.append((x, y, score))
                 print(f"  audio {x:9.3f}s -> bounce {y:9.3f}s; correlation {score:.3f}", flush=True)
             return matches
@@ -438,7 +448,7 @@ def synchronise(camera, reference, work, offsets, drifts, allow_drift):
             # window. Shorter anchors tolerate this while consensus across seven
             # distant points still checks the identity and timing of the match.
             print("  Retrying with 2-second anchors to tolerate clock drift …", flush=True)
-            matches = find_matches(2*SR)
+            matches = find_matches(2*SR, anchors=17)
             audio_offset, camera.rate, count = fit_sync(matches, allow_drift)
         # Camera source time is measured from its first video frame, not audio.
         camera.offset = audio_offset + camera.rate * (camera.video_start-camera.audio_start)
@@ -954,9 +964,9 @@ def build_parser():
     return parser
 
 
-def main():
+def main(argv=None):
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not math.isfinite(args.cut_scale) or not 0 < args.cut_scale <= 1000:
         parser.error("--cut-scale must be finite, greater than zero and at most 1000")
     if not math.isfinite(args.main_share) or not 0 <= args.main_share <= 1:

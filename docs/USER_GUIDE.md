@@ -283,3 +283,22 @@ Example `effects-settings.json` (replace these paths with your movie and destina
 ```
 
 Use `end: null` to continue through the source movie's end. Effect ranges: bounce `0–1`, brightness `-0.3–0.3`, contrast `0.5–2`, and saturation `0–2`. Style names are `none`, `warm`, `cool`, `mono`, `vintage`, and `vivid`. Fades and start/end times are seconds. The original movie is protected even when an output path is a symlink or hard link to it. Existing output files require overwrite, and a new movie is checked before it replaces an earlier export.
+
+
+## Separate audio excerpts against long camera recordings
+
+Add one long MOV/MP4 recording per angle as usual. Under **Audio excerpts**, select all the WAV files with **Browse audio** (or upload/drop several files). Every WAV becomes a separate exported video; they do not need to be consecutive, and gaps between excerpts are not added to the outputs. Camera recordings and their fixed crop settings are shared across the batch.
+
+Use **Edit timing** next to a WAV to select it. Waveform selection, forced shots, drop/breakdown/action markers and manual sync offsets now apply to that excerpt only. Its timeline starts at 00:00. The camera/hold-length/quality/seed controls apply to every excerpt. Projects and local drafts retain each excerpt's timing settings.
+
+**Build preview plan** checks every excerpt. Choose **Inspect plan / video** in the batch results to inspect its offsets, cut list and warnings. **Render** creates one H.264 MP4 per WAV, each in a numbered `part_001_<audio-name>` folder inside your chosen output folder, with its own report, cut list and crop previews. Each output uses only that WAV as its soundtrack. Plan outputs already on disk require the existing overwrite option when rendering into the same folders.
+
+A camera that ends during an excerpt stops being selected after its final available frame. Other available angles take over; if all footage ends, the remainder is black while the audio continues. Forced shots requiring unavailable footage are errors. If a camera cannot be confidently synced to an excerpt, it is excluded from that excerpt with a visible warning. This may mean it has no overlapping footage, silent/unrelated camera audio, or needs a manual offset; it is not proof that the file contains no useful footage. If no camera can be synced, that excerpt fails rather than guessing. Other excerpts continue, and completed outputs are retained after failures or cancellation.
+
+For command-line batch rendering, use a project saved from the UI:
+
+```sh
+python3 audio_batch.py --config multicam-setup.json
+```
+
+The `audio_parts` array contains objects with `path`, `overrides`, `shot_overrides`, `drops`, `breakdowns` and `activities`; all timing values are relative to their own WAV. Existing single-bounce projects still use their original workflow and output names.

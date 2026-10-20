@@ -31,6 +31,9 @@ def worker(kind, arguments):
         if kind == 'multicam_edit':
             import multicam_edit
             multicam_edit.main()
+        elif kind == 'audio_batch':
+            import audio_batch
+            audio_batch.main()
         else:
             import effects
             effects.main()
@@ -68,8 +71,8 @@ def self_test():
 def main():
     prepare_runtime()
     arguments = sys.argv[1:]
-    if arguments and arguments[0] in ('--engine', '--effects'):
-        return worker('multicam_edit' if arguments[0] == '--engine' else 'effects', arguments[1:])
+    if arguments and arguments[0] in ('--engine', '--effects', '--audio-batch'):
+        return worker({'--engine':'multicam_edit','--effects':'effects','--audio-batch':'audio_batch'}[arguments[0]], arguments[1:])
     if arguments == ['--self-test']:
         self_test()
         return 0

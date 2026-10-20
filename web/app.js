@@ -6,7 +6,7 @@
     files: {a: [], b: [], audio: []}, cameras: [{id:'A',key:'a',label:'Camera A'},{id:'B',key:'b',label:'Camera B'}], framing: new Map(), shotOverrides: [], sourceFrame: null, selectedFrame: '', latestEdit: null, page: 'edit', waves: {}, metadata: new Map(), overrides: new Map(),
     config: null, jobId: null, pollTimer: null, busy: false, uploadBusy: false,
     reportKey: '', lastLog: '', previewUrls: {}, previewFiles: {},
-    energyPlan: null, energyLoading: false,
+    energyPlan: null, energyLoading: false, activeAudio:'', audioTimings:new Map(), batchReportIndex:1,
     browser: {target: 'a', path: '', parent: null, entries: [], selected: new Set(), request: 0},
   };
   const draftState={key:'multicam-studio:last-project:v1',ready:false,offered:null,timer:null,signature:''};
@@ -47,20 +47,21 @@
       const meta = state.metadata.get(path);
       let detail = meta ? (meta.error || [meta.duration != null ? timecode(meta.duration,0) : '', meta.width && meta.height ? `${meta.width} × ${meta.height}` : '', target !== 'audio' && meta.has_audio === false ? 'No camera audio · set manual offset' : ''].filter(Boolean).join(' · ')) : 'Reading file…';
       info.append(textEl('div', detail || 'File selected', 'file-meta' + (meta?.error ? ' error-text' : ''))); row.append(info);
-      if(target !== 'audio' && state.files[target].length > 1) {
+      if(state.files[target].length > 1) {
         [['↑', -1, 'Move part up'],['↓', 1, 'Move part down']].forEach(([symbol, step, label]) => {
           const button = textEl('button', symbol); button.type='button'; button.title=label; button.setAttribute('aria-label', `${label}: ${basename(path)}`); button.disabled=index+step<0 || index+step>=state.files[target].length;
           button.addEventListener('click', () => {const files = state.files[target]; [files[index],files[index+step]]=[files[index+step],files[index]]; renderFiles(target); renderOverrides(); }); row.append(button);
         });
       }
+      if(target==='audio'){const edit=textEl('button',path===state.activeAudio?'Editing timing':'Edit timing','small');edit.type='button';edit.setAttribute('aria-pressed',String(path===state.activeAudio));edit.addEventListener('click',()=>activateAudio(path));row.append(edit);}
       if(target!=='audio'){const frame=textEl('button','▣');frame.type='button';frame.title='Set framing for this clip';frame.setAttribute('aria-label',`Set framing for ${basename(path)}`);frame.addEventListener('click',()=>{state.selectedFrame=path;updateFramePicker();loadSourceFrame();});row.append(frame);}
       const remove = textEl('button','×'); remove.type='button'; remove.title='Remove file'; remove.setAttribute('aria-label',`Remove ${basename(path)}`);
-      remove.addEventListener('click', () => {state.files[target].splice(index,1); renderFiles(target); renderOverrides(); updateFramePicker(); updateCameraSelectors(); if(target!=='audio') {delete state.previewUrls[target]; renderPreviews();} }); row.append(remove); list.append(row);
+      remove.addEventListener('click', () => {state.files[target].splice(index,1); if(target==='audio')refreshAudioChoice();renderFiles(target); renderOverrides(); updateFramePicker(); updateCameraSelectors(); if(target!=='audio') {delete state.previewUrls[target]; renderPreviews();} }); row.append(remove); list.append(row);
     });
   }
   async function addFiles(target, paths) {
     const unique = [...new Set(paths)].filter(Boolean);
-    if(target === 'audio') state.files.audio = unique.slice(0,1);
+    if(target === 'audio'){state.files.audio=[...new Set([...state.files.audio,...unique])];refreshAudioChoice();}
     else state.files[target] = [...new Set([...(state.files[target]||[]), ...unique])].sort(natural.compare);
     renderFiles(target); renderOverrides(); updateFramePicker(); updateCameraSelectors();scheduleAutosave();
     if(target !== 'audio') renderPreviews();
@@ -86,8 +87,8 @@
 
   async function openBrowser(target) {
     state.browser.target=target; state.browser.selected.clear(); const folder=isFolderTarget(target); const special=sourceField(target);
-    $('browser-title').textContent=folder?(target==='setup-default-folder'?'Choose a recordings folder':'Choose an output folder'):target==='audio'?'Choose your audio bounce':special?'Choose a finished movie':`Choose ${state.cameras.find(c=>c.key===target)?.label||target} files`;
-    $('browser-select').textContent=folder?'Use this folder':target==='audio'?'Use selected audio':special?'Use selected movie':'Add selected files';
+    $('browser-title').textContent=folder?(target==='setup-default-folder'?'Choose a recordings folder':'Choose an output folder'):target==='audio'?'Choose audio excerpts':special?'Choose a finished movie':`Choose ${state.cameras.find(c=>c.key===target)?.label||target} files`;
+    $('browser-select').textContent=folder?'Use this folder':target==='audio'?'Add selected audio':special?'Use selected movie':'Add selected files';
     $('browser-error').hidden=true;$('new-folder-form').hidden=true;$('new-folder-button').hidden=!folder; $('file-dialog').showModal();
     const field=folder?outputField(target):special;const existing=field?($(field).value?(folder?$(field).value:dirname($(field).value)):''):state.files[target]?.[0]?dirname(state.files[target][0]):'';
     await browse(existing || state.browser.path || state.config?.default_folder || '/');
@@ -115,7 +116,7 @@
       button.append(textEl('span',entry.is_dir?'▸':'','browser-entry-icon'));
       if(!entry.is_dir){const check=textEl('span',state.browser.selected.has(entry.path)?'✓':'','browser-entry-check');check.setAttribute('aria-hidden','true');button.append(check);button.setAttribute('aria-pressed',String(state.browser.selected.has(entry.path)));}
       button.append(textEl('span',entry.name,'browser-entry-name'),textEl('span',entry.is_dir?'Folder':bytes(entry.size),'browser-entry-size'));
-      button.addEventListener('click',()=>{if(entry.is_dir){browse(entry.path);}else{if(state.browser.selected.has(entry.path))state.browser.selected.delete(entry.path);else{if(state.browser.target==='audio'||sourceField(state.browser.target))state.browser.selected.clear();state.browser.selected.add(entry.path);}renderBrowser();}});host.append(button);
+      button.addEventListener('click',()=>{if(entry.is_dir){browse(entry.path);}else{if(state.browser.selected.has(entry.path))state.browser.selected.delete(entry.path);else{if(sourceField(state.browser.target))state.browser.selected.clear();state.browser.selected.add(entry.path);}renderBrowser();}});host.append(button);
     });
     if(!entries.length)host.append(textEl('div',folderMode?'No subfolders. You can use this folder.':'No matching files in this folder.','browser-message'));
     $('browser-selection').textContent=folderMode?state.browser.path:`${state.browser.selected.size} file${state.browser.selected.size===1?'':'s'} selected`;
@@ -139,7 +140,7 @@
   }
   async function uploadFiles(target,files) {
     if(state.uploadBusy){toast('Wait for the current file copy to finish.');return;}if(!files.length)return;
-    if(target==='audio')files=files.slice(0,1);state.uploadBusy=true;setJobButtons();$('upload-status').hidden=false;
+    state.uploadBusy=true;setJobButtons();$('upload-status').hidden=false;
     try {for(let i=0;i<files.length;i++){const path=await uploadFile(files[i],i+1,files.length);await addFiles(target,[path]);}$('upload-status').textContent=`${files.length} file${files.length===1?'':'s'} copied. Ready to use.`;}
     catch(error){$('upload-status').textContent='File copy stopped.';showError(error);}finally{state.uploadBusy=false;setJobButtons();}
   }
@@ -176,14 +177,32 @@
     const pieces=clean.split(':').map(Number);if(pieces.length>1&&pieces.slice(1).some(n=>n>=60))throw new Error(`Invalid time “${clean}”: minutes and seconds must be less than 60.`);
     return pieces.reduce((acc,n)=>acc*60+n,0);
   }
-  function parseRanges(id,label) {return $(id).value.split(/[,;\n]+/).map(x=>x.trim()).filter(Boolean).map(line=>{const parts=line.split(/\s*[-–—]\s*/);if(parts.length!==2)throw new Error(`${label}: use a start–end range, such as 01:20–01:45.`);const result=parts.map(parseTime);if(result[1]<=result[0])throw new Error(`${label}: the end must come after the start.`);return result;});}
+  function parseRanges(id,label) {return parseRangeText($(id).value,label);}
+  function parseRangeText(value,label) {return value.split(/[,;\n]+/).map(x=>x.trim()).filter(Boolean).map(line=>{const parts=line.split(/\s*[-–—]\s*/);if(parts.length!==2)throw new Error(`${label}: use a start–end range, such as 01:20–01:45.`);const result=parts.map(parseTime);if(result[1]<=result[0])throw new Error(`${label}: the end must come after the start.`);return result;});}
+  function emptyAudioTiming(){return {dropsText:'',breakdownsText:'',activitiesText:'',overrides:[],shot_overrides:[]};}
+  function captureAudioTiming(){return {dropsText:$('drops').value,breakdownsText:$('breakdowns').value,activitiesText:$('activities').value,overrides:[...state.overrides].map(([path,value])=>({path,...value})),shot_overrides:state.shotOverrides.map(item=>({...item}))};}
+  function serializeAudioTiming(t){return {drops:parseRangeText(t.dropsText,'Drop markers'),breakdowns:parseRangeText(t.breakdownsText,'Breakdown markers'),activities:t.activitiesText.split(/[,;\n]+/).map(x=>x.trim()).filter(Boolean).map(parseTime),overrides:t.overrides.filter(o=>state.cameras.some(c=>(state.files[c.key]||[]).includes(o.path))),shot_overrides:t.shot_overrides};}
+  function timingFromConfig(c){return {dropsText:(c.drops||[]).map(p=>p.join('–')).join('\n'),breakdownsText:(c.breakdowns||[]).map(p=>p.join('–')).join('\n'),activitiesText:(c.activities||[]).join(', '),overrides:c.overrides||[],shot_overrides:c.shot_overrides||[]};}
+  function activateAudio(path,savePrevious=true){
+    const old=state.activeAudio;if(savePrevious&&old)state.audioTimings.set(old,captureAudioTiming());
+    state.activeAudio=path;
+    const timing=state.audioTimings.get(path)||(!old&&path?captureAudioTiming():emptyAudioTiming());
+    $('drops').value=timing.dropsText;$('breakdowns').value=timing.breakdownsText;$('activities').value=timing.activitiesText;
+    state.overrides=new Map(timing.overrides.map(o=>[o.path,{offset:o.offset??null,drift_ppm:o.drift_ppm??null}]));state.shotOverrides=timing.shot_overrides.map(o=>({...o}));
+    $('audio-active-label').textContent=path?`Timing controls apply to: ${basename(path)} · each excerpt starts at 00:00`:'Choose one or more WAV audio excerpts.';
+    if(old!==path&&state.waves.edit){const w=state.waves.edit;w.generation=(w.generation||0)+1;w.player.pause();w.player.removeAttribute('src');w.player.load();w.path='';w.duration=0;w.body.hidden=true;w.empty.hidden=false;w.empty.textContent='Load the selected audio excerpt to inspect its waveform.';}
+    renderFiles('audio');renderOverrides();renderShotOverrides();scheduleAutosave();
+  }
+  function refreshAudioChoice(){activateAudio(state.files.audio.includes(state.activeAudio)?state.activeAudio:(state.files.audio[0]||''));}
   function collectConfig(planOnly=false,validate=true) {
     if(validate&&!$('edit-form').reportValidity())throw new Error('Check the highlighted settings.');
     if(validate&&(!state.cameras.length||state.cameras.some(c=>!state.files[c.key]?.length)||!state.files.audio.length))throw new Error('Choose at least one recording for each camera and an audio bounce.');
+    if(state.activeAudio)state.audioTimings.set(state.activeAudio,captureAudioTiming());
     const config={cameras:state.cameras.map(c=>({id:c.id,label:c.label,clips:(state.files[c.key]||[]).map(path=>({path,framing:frameFor(path)}))})),shot_overrides:state.shotOverrides.map(o=>({...o})),audio:state.files.audio[0]||'',output_dir:$('output-dir').value.trim(),output_name:$('output-name').value.trim(),mode:mode(),main_camera:$('main-camera').value,main_share:number('main-share'),seed:number('seed'),fps:number('fps'),cut_scale:number('cut-scale'),a_center:cropValues('a'),b_center:cropValues('b'),auto_sections:$('auto-sections').checked,drift:$('drift').checked,crf:number('crf'),preset:$('preset').value,overwrite:$('overwrite').checked,plan_only:planOnly};
     for(const [prefix,key] of [['main','main_hold'],['cutaway','cutaway_hold'],['drop','drop_hold'],['breakdown','breakdown_hold']]){const pair=[number(`${prefix}-min`),number(`${prefix}-max`)];if(pair.some(n=>!Number.isFinite(n)||n<=0)||pair[0]>pair[1])throw new Error(`Check the ${prefix} shot range: use positive values with minimum ≤ maximum.`);config[key]=pair;}
     config.drops=parseRanges('drops','Drop markers');config.breakdowns=parseRanges('breakdowns','Breakdown markers');config.activities=$('activities').value.split(/[,;\n]+/).map(s=>s.trim()).filter(Boolean).map(parseTime);
     config.overrides=state.cameras.flatMap(c=>state.files[c.key]||[]).map(path=>({path,offset:state.overrides.get(path)?.offset ?? null,drift_ppm:state.overrides.get(path)?.drift_ppm ?? null})).filter(o=>o.offset!==null||o.drift_ppm!==null);
+    config.active_audio=state.activeAudio;config.audio_parts=state.files.audio.map(path=>({path,...serializeAudioTiming(state.audioTimings.get(path)||emptyAudioTiming())}));
     if(validate&&/[/\\]/.test(config.output_name))throw new Error('Output filename must not contain a folder path. Set the folder separately.');
     return config;
   }
@@ -197,7 +216,7 @@
     for(const key of ['drops','breakdowns'])if(Array.isArray(config[key]))$(key).value=config[key].map(pair=>`${timecode(pair[0],3)}–${timecode(pair[1],3)}`).join('\n');
     if(Array.isArray(config.activities))$('activities').value=config.activities.map(n=>timecode(n,3)).join(', ');
     state.overrides=new Map((config.overrides||[]).map(o=>[o.path,{offset:o.offset??null,drift_ppm:o.drift_ppm??null}]));
-    state.files={audio:[]};state.framing=new Map();state.previewUrls={};state.previewFiles={};state.sourceFrame=null;state.selectedFrame='';const cameras=config.cameras||[{id:'A',label:'Camera A',clips:(config.cam_a||[]).map(path=>({path,framing:{mode:'crop',center:config.a_center||[.5,.5],zoom:1}}))},{id:'B',label:'Camera B',clips:(config.cam_b||[]).map(path=>({path,framing:{mode:'crop',center:config.b_center||[.5,.72],zoom:1}}))}];state.cameras=cameras.map((c,i)=>({id:c.id,key:'camera'+i,label:c.label||c.id}));for(let i=0;i<cameras.length;i++){state.files[state.cameras[i].key]=[];for(const clip of cameras[i].clips||[])state.framing.set(clip.path,clip.framing||{mode:'fit',center:[.5,.5],zoom:1});}renderCameraCards();for(let i=0;i<cameras.length;i++)addFiles(state.cameras[i].key,(cameras[i].clips||[]).map(c=>c.path));addFiles('audio',config.audio?[config.audio]:[]);state.shotOverrides=config.shot_overrides||[];renderShotOverrides();updateCameraSelectors();if(config.main_camera)$('main-camera').value=config.main_camera;renderOverrides();updateRole();updateFormat();
+    state.activeAudio='';state.audioTimings=new Map((config.audio_parts?.length?config.audio_parts:(config.audio?[{...config,path:config.audio}]:[])).map(part=>[part.path,timingFromConfig(part)]));state.files={audio:[]};state.framing=new Map();state.previewUrls={};state.previewFiles={};state.sourceFrame=null;state.selectedFrame='';const cameras=config.cameras||[{id:'A',label:'Camera A',clips:(config.cam_a||[]).map(path=>({path,framing:{mode:'crop',center:config.a_center||[.5,.5],zoom:1}}))},{id:'B',label:'Camera B',clips:(config.cam_b||[]).map(path=>({path,framing:{mode:'crop',center:config.b_center||[.5,.72],zoom:1}}))}];state.cameras=cameras.map((c,i)=>({id:c.id,key:'camera'+i,label:c.label||c.id}));for(let i=0;i<cameras.length;i++){state.files[state.cameras[i].key]=[];for(const clip of cameras[i].clips||[])state.framing.set(clip.path,clip.framing||{mode:'fit',center:[.5,.5],zoom:1});}renderCameraCards();for(let i=0;i<cameras.length;i++)addFiles(state.cameras[i].key,(cameras[i].clips||[]).map(c=>c.path));addFiles('audio',config.audio_parts?.length?config.audio_parts.map(p=>p.path):(config.audio?[config.audio]:[]));state.shotOverrides=config.shot_overrides||[];renderShotOverrides();updateCameraSelectors();if(config.main_camera)$('main-camera').value=config.main_camera;renderOverrides();updateRole();updateFormat();activateAudio(state.files.audio.includes(config.active_audio)?config.active_audio:(state.files.audio[0]||''),false);
   }
   $('save-settings').addEventListener('click',()=>{try{const config=collectConfig(false,false);const blob=new Blob([JSON.stringify({version:1,...config},null,2)],{type:'application/json'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='multicam-setup.json';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);toast('Setup saved. It includes file paths and edit settings.');}catch(error){showError(error);}});
   $('load-settings').addEventListener('click',()=>$('settings-file').click());
@@ -228,7 +247,19 @@
     const logs=(job.logs||[]).join('\n');if(logs!==state.lastLog){const log=$('job-logs');const atBottom=log.scrollHeight-log.scrollTop-log.clientHeight<40;log.textContent=logs||'Waiting for processing messages…';if(atBottom||!state.lastLog)log.scrollTop=log.scrollHeight;state.lastLog=logs;}
     if(!active){$('cancel-button').disabled=false;$('cancel-button').textContent='Cancel job';$('workspace-title').textContent=job.status==='completed'?(job.report?.status==='planned'?'Your edit is mapped out.':'Your set. Ready to share.'):job.status==='cancelled'?'Session cancelled.':'The edit needs attention.';}
     if(job.error){$('error-banner').querySelector('span').textContent=job.error;$('error-banner').hidden=false;}
-    if(job.report){const reportKey=JSON.stringify([job.id,job.status,job.report.status,job.artifacts]);if(reportKey!==state.reportKey){state.reportKey=reportKey;if((job.kind||state.activeKind)==='edit'){renderReport(job.report,job.artifacts||[]);}else renderToolResult(job);}}
+    if(job.report){const reportKey=JSON.stringify([job.id,job.status,job.report.status,job.artifacts,job.report.parts?.map(p=>[p.index,p.status,p.error])]);if(reportKey!==state.reportKey){state.reportKey=reportKey;if((job.kind||state.activeKind)==='edit'){if(job.report.type==='audio_batch')renderAudioBatch(job);else{$('audio-batch-results').hidden=true;renderReport(job.report,job.artifacts||[]);}}else renderToolResult(job);}}
+  }
+  function renderAudioBatch(job){
+    const report=job.report,host=$('audio-batch-results');host.hidden=false;host.replaceChildren();
+    host.append(textEl('h3',`${report.completed_count}/${report.part_count} audio excerpts ${job.config?.plan_only?'planned':'exported'}`));
+    const list=textEl('div','','audio-part-results');
+    const available=(report.parts||[]).filter(p=>p.report);let chosen=available.find(p=>p.index===state.batchReportIndex)||available[0];
+    for(const part of report.parts||[]){const row=textEl('div','','audio-part-result');row.append(textEl('strong',`${part.index}. ${basename(part.audio)}`),textEl('span',part.error||part.status,'help'));
+      if(part.report){const button=textEl('button',chosen===part?'Showing this excerpt':'Inspect plan / video','small');button.type='button';button.addEventListener('click',()=>{state.batchReportIndex=part.index;renderAudioBatch(job);});row.append(button);}
+      for(const warning of part.warnings||[])row.append(textEl('p',warning,'help excerpt-warning'));list.append(row);
+    }host.append(list);
+    if(chosen)renderReport(chosen.report,chosen.artifacts||[]);else{$('results').hidden=true;}
+    const downloads=textEl('div','','downloads');for(const artifact of job.artifacts||[]){if(artifact.kind==='log')continue;const link=textEl('a',`↓ ${artifact.name}`);link.href=artifact.url;link.download=artifact.name;downloads.append(link);}host.append(downloads);
   }
   function renderReport(report,artifacts) {
     $('results').hidden=false;const stats=report.stats||{},duration=Number(report.duration_seconds)||0,shots=report.shots||[];
@@ -354,15 +385,15 @@
       selection(){return {start:Number(start.value),end:Number(end.value)};},
       setSelection(a,b){start.value=String(Math.max(0,Math.min(w.duration,a)));end.value=String(Math.max(0,Math.min(w.duration,b)));w.draw();},
       draw(){if(!w.duration)return;const cssWidth=Math.max(300,scroll.clientWidth||700)*Number(zoom.value);canvas.style.width=cssWidth+'px';canvas.style.height='135px';const dpr=window.devicePixelRatio||1;canvas.width=Math.round(cssWidth*dpr);canvas.height=Math.round(135*dpr);const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);ctx.fillStyle='#11170f';ctx.fillRect(0,0,cssWidth,135);const selection=w.selection();ctx.fillStyle='#c8df9330';ctx.fillRect(selection.start/w.duration*cssWidth,0,(selection.end-selection.start)/w.duration*cssWidth,135);ctx.strokeStyle='#91b7a0';ctx.lineWidth=1;const step=w.peaks.length/cssWidth;for(let x=0;x<cssWidth;x+=2){let value=0;const left=Math.floor(x*step),right=Math.min(w.peaks.length,Math.ceil((x+2)*step));for(let i=left;i<right;i++)value=Math.max(value,w.peaks[i]);ctx.beginPath();ctx.moveTo(x,67-value*55);ctx.lineTo(x,67+value*55);ctx.stroke();}ctx.strokeStyle='#e3edc2';for(const t of [selection.start,selection.end]){const x=t/w.duration*cssWidth;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,135);ctx.stroke();}ctx.strokeStyle='#f0ae74';const position=player.currentTime/w.duration*cssWidth;ctx.beginPath();ctx.moveTo(position,0);ctx.lineTo(position,135);ctx.stroke();clock.textContent=`${timecode(player.currentTime)} / ${timecode(w.duration)} · ${(selection.end-selection.start).toFixed(2)}s selected`;},
-      async load(path,options={}){empty.hidden=false;empty.textContent='Analysing audio… This can take a little while for a full set.';body.hidden=true;try{const response=await api('/api/waveform',{path,...options});w.path=path;w.duration=response.duration;w.peaks=response.peaks;w.energetic=response.energetic||[];player.src=response.audio_url;start.max=end.max=w.duration;w.setSelection(0,Math.min(w.duration,30));empty.hidden=true;body.hidden=false;w.draw();return response;}catch(error){empty.textContent='Could not load this waveform.';throw error;}}
+      async load(path,options={}){const generation=w.generation=(w.generation||0)+1;empty.hidden=false;empty.textContent='Analysing audio… This can take a little while for a full set.';body.hidden=true;try{const response=await api('/api/waveform',{path,...options});if(generation!==w.generation)return null;w.path=path;w.duration=response.duration;w.peaks=response.peaks;w.energetic=response.energetic||[];player.src=response.audio_url;start.max=end.max=w.duration;w.setSelection(0,Math.min(w.duration,30));empty.hidden=true;body.hidden=false;w.draw();return response;}catch(error){empty.textContent='Could not load this waveform.';throw error;}}
     };
     zoom.addEventListener('change',()=>w.draw());for(const input of [start,end])input.addEventListener('input',()=>w.draw());player.addEventListener('timeupdate',()=>{if(w.selectionPlaying&&player.currentTime>=Number(end.value)){player.pause();w.selectionPlaying=false;}w.draw();});player.addEventListener('pause',()=>{w.selectionPlaying=false;play.textContent='Play selection';});play.addEventListener('click',()=>{const range=w.selection();if(!w.duration||range.end<=range.start){showError('Choose a selection whose end is after its start.');return;}player.currentTime=range.start;w.selectionPlaying=true;player.play().catch(showError);play.textContent='Playing…';});
     let anchor=null,moved=false;const timeAt=event=>{const rect=canvas.getBoundingClientRect();return Math.max(0,Math.min(w.duration,(event.clientX-rect.left)/rect.width*w.duration));};canvas.addEventListener('pointerdown',event=>{if(!w.duration)return;canvas.setPointerCapture(event.pointerId);anchor=timeAt(event);moved=false;});canvas.addEventListener('pointermove',event=>{if(anchor===null)return;const t=timeAt(event);if(Math.abs(t-anchor)>.01){moved=true;w.setSelection(Math.min(anchor,t),Math.max(anchor,t));}});canvas.addEventListener('pointerup',event=>{if(anchor===null)return;if(!moved)player.currentTime=timeAt(event);anchor=null;w.draw();});canvas.addEventListener('pointercancel',()=>anchor=null);state.waves[id]=w;return w;
   }
   createWaveform('edit','edit-wave-host');createWaveform('highlight','highlight-wave-host');window.addEventListener('resize',()=>Object.values(state.waves).forEach(w=>w.draw()));
-  $('load-edit-wave').addEventListener('click',async()=>{const path=state.files.audio[0];if(!path){showError('Choose an audio bounce first.');return;}const button=$('load-edit-wave');button.disabled=true;try{await state.waves.edit.load(path);}catch(error){showError(error);}finally{button.disabled=false;}});
+  $('load-edit-wave').addEventListener('click',async()=>{const path=state.activeAudio||state.files.audio[0];if(!path){showError('Choose an audio bounce first.');return;}const button=$('load-edit-wave');button.disabled=true;try{await state.waves.edit.load(path);}catch(error){showError(error);}finally{button.disabled=false;}});
   function selectedRange(w){if(!w.duration)throw new Error('Load the waveform and select a time range first.');const {start,end}=w.selection();if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end> w.duration+.001||end<=start)throw new Error('Choose a valid selection inside the source duration.');return {start,end};}
-  $('add-shot-override').addEventListener('click',()=>{try{const range=selectedRange(state.waves.edit);if(state.waves.edit.path!==state.files.audio[0])throw new Error('Reload the waveform for the current audio bounce first.');if(state.shotOverrides.some(o=>range.start<o.end&&range.end>o.start))throw new Error('This selection overlaps an existing forced angle. Remove or adjust that range first.');const camera_id=$('override-camera').value;if(!camera_id)throw new Error('Add a camera first.');const entry={...range,camera_id};if($('override-part').value)entry.source_path=$('override-part').value;state.shotOverrides.push(entry);state.shotOverrides.sort((a,b)=>a.start-b.start);renderShotOverrides();toast('Camera override added to the edit.');}catch(error){showError(error);}});
+  $('add-shot-override').addEventListener('click',()=>{try{const range=selectedRange(state.waves.edit);if(state.waves.edit.path!==state.activeAudio)throw new Error('Reload the waveform for the current audio bounce first.');if(state.shotOverrides.some(o=>range.start<o.end&&range.end>o.start))throw new Error('This selection overlaps an existing forced angle. Remove or adjust that range first.');const camera_id=$('override-camera').value;if(!camera_id)throw new Error('Add a camera first.');const entry={...range,camera_id};if($('override-part').value)entry.source_path=$('override-part').value;state.shotOverrides.push(entry);state.shotOverrides.sort((a,b)=>a.start-b.start);renderShotOverrides();toast('Camera override added to the edit.');}catch(error){showError(error);}});
   function renderShotOverrides(){const host=$('shot-overrides');host.replaceChildren();for(const [index,entry]of state.shotOverrides.entries()){const row=textEl('div','','override-row');row.append(textEl('span',`${timecode(entry.start)}–${timecode(entry.end)} · ${entry.camera_id} · ${entry.source_path?basename(entry.source_path):'Any available part'}`));const button=textEl('button','×','icon-button');button.type='button';button.setAttribute('aria-label','Remove forced angle');button.addEventListener('click',()=>{state.shotOverrides.splice(index,1);renderShotOverrides();});row.append(button);host.append(row);}}
   for(const [button,id]of [['mark-drop','drops'],['mark-breakdown','breakdowns']])$(button).addEventListener('click',()=>{try{const range=selectedRange(state.waves.edit);$(id).value+=($(id).value?'\n':'')+`${timecode(range.start,2)}–${timecode(range.end,2)}`;toast(`Selection added to ${id}.`);}catch(error){showError(error);}});
   function currentEnergyPlan(){const plan=state.energyPlan;return plan&&plan.path===$('highlight-source').value.trim()&&plan.target===number('highlight-length')?plan:null;}
@@ -383,7 +414,7 @@
     if(!Number.isFinite(target)||target<2||target>300){showError('Choose an approximate clip length between 2 and 300 seconds.');return;}
     state.energyLoading=true;state.energyPlan=null;updateBatchButtons();$('highlight-find').textContent='Finding clips…';
     try{const response=await state.waves.highlight.load(path,{target_seconds:target});
-      if(path!==$('highlight-source').value.trim()||target!==number('highlight-length')){invalidateEnergyPlan();return;}
+      if(!response||path!==$('highlight-source').value.trim()||target!==number('highlight-length')){invalidateEnergyPlan();return;}
       state.energyPlan={path,target,items:(response.energetic||[]).map(item=>({...item,selected:true}))};renderEnergy();
     }catch(error){invalidateEnergyPlan();showError(error);}finally{state.energyLoading=false;$('highlight-find').textContent='Find energetic clips';updateBatchButtons();}
   }
