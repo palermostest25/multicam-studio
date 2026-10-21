@@ -5,6 +5,8 @@
 - Fixed a crash when switching between audio excerpts while the preview plays (2.0.0 could pair one excerpt's plan with another's cameras).
 - Social clips export at several lengths in one go (default 15, 30 and 60 s), each in its own folder beside the full edit.
 - Clip framing option: **Smart** (default; shows wide shots whole over a blurred background in vertical clips and crops only near-matching shapes), Fit, Crop, or Same as the full edit. Clips keep their quick, on-the-beat cuts.
+- Fixed "Cannot start reading … error -11841" when exporting some clips: audio is now cut on exact video frame boundaries, and the video instructions always cover the whole composition.
+- Recording clocks: each camera's recording start time is used to tell "not recording during this audio" (shown in grey) from a failed sync, to retry a failed sync around the expected overlap, and to suggest an offset when audio sync still fails.
 - NVIDIA GPU support for the web app and Docker image: NVENC encoding and CUDA decoding are detected and used automatically (`hardware.py`). New `docker-compose.nvidia.yml`.
 
 ## 2.0.0

@@ -141,6 +141,10 @@ The image's FFmpeg includes NVENC and NVDEC. Install the NVIDIA driver and the [
 
 Without a GPU, containers have no hardware video encoder, so camera picture scoring is off by default there (choose **On** under Editing rhythm to enable it; it decodes keyframes in software). 1080p with the `veryfast` preset renders much faster than 4K.
 
+### TrueNAS SCALE
+
+Use [`docker-compose.truenas.yml`](docker-compose.truenas.yml) with **Apps → Discover Apps → ⋮ → Install via YAML**. Before installing, create the `recordings`, `exports` and `state` datasets and give them to the `apps` user (568). For an NVIDIA GPU, tick **Install NVIDIA Drivers** under Apps → Configuration → Settings. Replace `tank` with your pool name and `192.168.1.10` with your TrueNAS address.
+
 The same server mode works without Docker: `python server.py --host 0.0.0.0` (every option also has a `MULTICAM_…` environment variable; see `python server.py --help`).
 
 ## Build the Mac app

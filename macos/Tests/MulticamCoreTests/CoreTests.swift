@@ -166,6 +166,21 @@ final class ClipOptionTests: XCTestCase {
     }
 }
 
+final class CompositionTests: XCTestCase {
+    func testInstructionsAlwaysReachTheCompositionEnd() {
+        // 2.1.0 bug: audio cut on a 48 kHz grid ran 1/48000 s past the last video frame (error -11841).
+        let a = MulticamInstruction(timeRange: CMTimeRange(start: .zero, end: CMTime(value: 100, timescale: 30)),
+                                    trackID: nil, style: nil, look: Look(), totalDuration: 7)
+        let b = MulticamInstruction(timeRange: CMTimeRange(start: CMTime(value: 100, timescale: 30), end: CMTime(value: 212, timescale: 30)),
+                                    trackID: nil, style: nil, look: Look(), totalDuration: 7)
+        let longer = Renderer.covering([a, b], duration: CMTime(value: 339201, timescale: 48000))
+        XCTAssertEqual(longer.last?.timeRange.end, CMTime(value: 339201, timescale: 48000))
+        let shorter = Renderer.covering([a, b], duration: CMTime(value: 90, timescale: 30))
+        XCTAssertEqual(shorter.count, 1)
+        XCTAssertEqual(shorter.last?.timeRange.end, CMTime(value: 90, timescale: 30))
+    }
+}
+
 final class SyncTests: XCTestCase {
     func testCorrelationFindsTemplate() {
         var rng = SeededRandom(seed: 9)

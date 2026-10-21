@@ -10,6 +10,7 @@ public struct PartAnalysis: Sendable {
     public var vision: [VisionScores?]           // aligned with clips
     public var waveform: [Float]                 // 0-1 peaks for display
     public var warnings: [String]
+    public var excluded: [ExcludedClip] = []
     public var duration: Double { bounce.duration }
 
     public func frames(fps: Int) -> Int { Int((duration * Double(fps) - 1e-8).rounded(.up)) }
@@ -52,6 +53,15 @@ public struct PartAnalysis: Sendable {
         }
         return Planner.scores(steps: steps, vision: mapped)
     }
+}
+
+/// A recording left out of one excerpt, and why.
+public struct ExcludedClip: Sendable, Hashable {
+    public var path: String
+    public var cameraID: String
+    public var noFootage: Bool          // the camera wasn't recording during this audio
+    public var message: String
+    public var suggestedOffset: Double? // from the recording clocks, about ±1 s
 }
 
 public struct PlannedClip: Sendable, Hashable, Identifiable {
@@ -146,6 +156,8 @@ public final class Engine: @unchecked Sendable {
         var reference = raw
         Biquad.apply(&reference, highpass: 120, lowpass: 3000, sampleRate: 8000)
         var clips = [SyncedClip](), warnings = [String]()
+        var failed = [(camera: CameraDefinition, url: URL, info: MediaInfo?, error: String)]()
+        var excluded = [ExcludedClip]()
         var manual = [String: (Double, Double)]()
         for o in part.overrides { if let offset = o.offset, manual[o.path] == nil { manual[o.path] = (offset, o.driftPPM ?? 0) } }
         let total = project.cameras.flatMap(\.clips).count
@@ -176,7 +188,8 @@ public final class Engine: @unchecked Sendable {
                     }
                     let end = sync.offset + sync.rate * info.duration
                     if end <= 0 || sync.offset >= bounce.duration {
-                        warnings.append("\(camera.id) / \(url.lastPathComponent) has no footage during this audio.")
+                        excluded.append(ExcludedClip(path: url.path, cameraID: camera.id, noFootage: true,
+                                                     message: "No footage during this audio.", suggestedOffset: nil))
                         continue
                     }
                     clips.append(SyncedClip(cameraID: camera.id, label: camera.label, url: url, info: info,
@@ -185,11 +198,45 @@ public final class Engine: @unchecked Sendable {
                 } catch let error as CancellationError {
                     throw error
                 } catch {
-                    let message = "\(camera.id) / \(url.lastPathComponent): left out because sync could not be verified. \(error.localizedDescription)"
-                    warnings.append(message)
-                    log("WARNING: " + message)
+                    failed.append((camera, url, try? await Media.info(url), error.localizedDescription))
                 }
             }
+        }
+        // Recording clocks place every camera on one timeline: tell "wasn't recording" apart from
+        // "couldn't sync", and retry a failed sync only around where the clocks say it overlaps.
+        let anchorClip = clips.filter { $0.info.creationDate != nil && $0.sync.method != "manual" }
+            .max { ($0.coverage.last - $0.coverage.first) < ($1.coverage.last - $1.coverage.first) }
+            ?? clips.first { $0.info.creationDate != nil }
+        let audioStart = anchorClip.map { $0.info.creationDate!.addingTimeInterval(-$0.sync.offset) }
+        for item in failed {
+            var expected: Double?
+            if let audioStart, let date = item.info?.creationDate { expected = date.timeIntervalSince(audioStart) }
+            if let expected, let info = item.info {
+                if expected + info.duration < -5 || expected > bounce.duration + 5 {
+                    let gap = expected > 0 ? expected - bounce.duration : -(expected + info.duration)
+                    excluded.append(ExcludedClip(path: item.url.path, cameraID: item.camera.id, noFootage: true,
+                                                 message: "No footage during this audio (the recording \(expected > 0 ? "starts" : "ended") \(Timecode.short(max(0, gap))) \(expected > 0 ? "after it ends" : "before it starts")).",
+                                                 suggestedOffset: nil))
+                    log("\(item.url.lastPathComponent): not recording during this audio (by the camera clocks)")
+                    continue
+                }
+                if info.hasAudio, let sync = try? await guidedSync(url: item.url, info: info,
+                                                                    expected: expected, bounceAudio: reference, duration: bounce.duration,
+                                                                    allowDrift: project.drift) {
+                    log(String(format: "%@: offset %+.3f s (search guided by the recording clocks)", item.url.lastPathComponent, sync.offset))
+                    clips.append(SyncedClip(cameraID: item.camera.id, label: item.camera.label, url: item.url, info: info,
+                                            framing: item.camera.clips.first { $0.path == item.url.path }?.framing ?? Framing(),
+                                            sync: sync, focus: nil, coverage: Coverage(angle: item.camera.id, first: 0, last: 0)))
+                    continue
+                }
+            }
+            let message = "\(item.camera.id) / \(item.url.lastPathComponent): left out because sync could not be verified. "
+                + (expected.map { String(format: "The camera clocks suggest an offset near %+.1f s; set it as a manual offset and fine-tune. ", $0) } ?? "")
+                + item.error
+            warnings.append(message)
+            excluded.append(ExcludedClip(path: item.url.path, cameraID: item.camera.id, noFootage: false,
+                                         message: "Couldn't sync to this audio.", suggestedOffset: expected))
+            log("WARNING: " + message)
         }
         guard !clips.isEmpty else {
             throw MulticamError("No camera could be synced to \(bounceURL.lastPathComponent). Check the footage overlaps this audio, or set manual offsets.")
@@ -210,8 +257,24 @@ public final class Engine: @unchecked Sendable {
                 }
             }
         }
-        return PartAnalysis(part: part, bounce: bounce, music: music, clips: clips, vision: vision,
-                            waveform: waveform, warnings: warnings)
+        var analysis = PartAnalysis(part: part, bounce: bounce, music: music, clips: clips, vision: vision,
+                                    waveform: waveform, warnings: warnings)
+        analysis.excluded = excluded
+        return analysis
+    }
+
+    /// Correlate only the stretch of camera audio the recording clocks point to (±20 s).
+    func guidedSync(url: URL, info: MediaInfo, expected: Double, bounceAudio: [Float],
+                    duration: Double, allowDrift: Bool) async throws -> SyncResult {
+        let samples = try await syncSamples(url)
+        let sr = AudioSync.sampleRate
+        let from = max(0, -expected - 20), to = min(Double(samples.count) / sr, -expected + duration + 20)
+        guard to - from > 6 else { throw MulticamError("Too little overlap") }
+        let slice = Array(samples[Int(from * sr)..<min(samples.count, Int(to * sr))])
+        var result = try AudioSync.synchronise(camera: slice, info: info, bounce: bounceAudio, allowDrift: allowDrift)
+        result.offset -= result.rate * from   // slice time 0 is camera time `from`
+        result.method = "automatic"
+        return result
     }
 
     static func peaks(_ samples: [Float], count: Int) -> [Float] {

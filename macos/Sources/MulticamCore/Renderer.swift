@@ -115,8 +115,10 @@ public enum Renderer {
         if let audio = try await audioAsset.loadTracks(withMediaType: .audio).first,
            let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
             let audioRange = try await audio.load(.timeRange)
-            let a = CMTime(seconds: Double(window.lowerBound) / Double(spec.fps), preferredTimescale: 48000)
-            let b = CMTimeMinimum(CMTime(seconds: Double(window.upperBound) / Double(spec.fps), preferredTimescale: 48000), audioRange.end)
+            // Exactly the video window (frame-based times), so the audio never runs past the last
+            // video instruction: AVFoundation rejects that composition (error -11841).
+            let a = CMTime(value: CMTimeValue(window.lowerBound), timescale: fps)
+            let b = CMTimeMinimum(CMTime(value: CMTimeValue(window.upperBound), timescale: fps), audioRange.end)
             try track.insertTimeRange(CMTimeRange(start: a, end: b), of: audio, at: .zero)
             let length = (b - a).seconds
             let fadeIn = max(declick, spec.look.fadeIn, audioFade), fadeOut = max(declick, spec.look.fadeOut, audioFade)
@@ -140,11 +142,22 @@ public enum Renderer {
         video.customVideoCompositorClass = MulticamCompositor.self
         video.frameDuration = CMTime(value: 1, timescale: fps)
         video.renderSize = CGSize(width: spec.width, height: spec.height)
-        video.instructions = instructions
+        video.instructions = Self.covering(instructions, duration: composition.duration)
         video.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
         video.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
         video.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
         return PreparedEdit(composition: composition, videoComposition: video, audioMix: mix, duration: total, sources: assets)
+    }
+
+    /// Instructions must tile the composition exactly: trim any past its end and stretch the last
+    /// one to reach it (a sub-frame difference otherwise makes the composition invalid).
+    static func covering(_ input: [MulticamInstruction], duration: CMTime) -> [MulticamInstruction] {
+        var result = input.filter { $0.timeRange.start < duration }
+        guard let last = result.last, last.timeRange.end != duration, duration > last.timeRange.start else { return result }
+        result[result.count - 1] = MulticamInstruction(timeRange: CMTimeRange(start: last.timeRange.start, end: duration),
+                                                       trackID: last.trackID, style: last.style, look: last.look,
+                                                       totalDuration: last.totalDuration)
+        return result
     }
 
     /// Encode a prepared edit with the hardware encoder. The old file is only replaced on success.
@@ -191,6 +204,17 @@ public enum Renderer {
             input.expectsMediaDataInRealTime = false
             writer.add(input)
             audioInput = input
+        }
+        if debug {
+            trace("composition duration \(edit.composition.duration.seconds) (\(edit.composition.duration.value)/\(edit.composition.duration.timescale)), frame \(edit.videoComposition.frameDuration.seconds)")
+            for t in edit.composition.tracks { trace("track \(t.trackID) \(t.mediaType.rawValue) \(t.timeRange.start.seconds)-\(t.timeRange.end.seconds)") }
+            var previous = CMTime.zero
+            for case let i as MulticamInstruction in edit.videoComposition.instructions {
+                let r = i.timeRange
+                if r.start != previous { trace("GAP/OVERLAP at \(r.start.seconds) (previous end \(previous.seconds))") }
+                previous = r.end
+            }
+            trace("instructions end \(previous.seconds) (\(previous.value)/\(previous.timescale)); count \(edit.videoComposition.instructions.count)")
         }
         trace("starting reader/writer")
         guard reader.startReading() else { throw MulticamError("Cannot start reading: \(reader.error?.localizedDescription ?? "unknown")") }
