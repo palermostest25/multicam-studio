@@ -127,6 +127,21 @@ public enum VideoCodec: String, Codable, CaseIterable, Identifiable, Sendable {
     public var fileExtension: String { self == .prores ? "mov" : "mp4" }
 }
 
+/// How recordings are framed in short clips. Cropping wide footage to 9:16 often cuts off
+/// the DJ, so "smart" fits wide shots over a blurred fill and only crops near-matching shapes.
+public enum ClipFraming: String, Codable, CaseIterable, Identifiable, Sendable {
+    case smart, fit, crop, same
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .smart: "Smart (fit wide shots, crop close matches)"
+        case .fit: "Fit whole picture · blurred background"
+        case .crop: "Crop to fill the frame"
+        case .same: "Same as the full edit"
+        }
+    }
+}
+
 public enum ClipMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case best, sequence
     public var id: String { rawValue }
@@ -166,6 +181,8 @@ public struct Project: Codable, Hashable, Sendable {
     public var vision = "auto"
     public var fullEdit = true
     public var clips: Double = 0
+    public var clipLengths: [Double] = []
+    public var clipFraming: ClipFraming = .smart
     public var clipCount: Int = 5
     public var clipMode: ClipMode = .best
     public var clipAspect: Aspect = .portrait
@@ -184,6 +201,7 @@ public struct Project: Codable, Hashable, Sendable {
         case aspect, resolution, codec, crf, planner, vision, clips, look
         case fullEdit = "full_edit", clipCount = "clip_count", clipMode = "clip_mode"
         case clipAspect = "clip_aspect", clipResolution = "clip_resolution", clipFade = "clip_fade"
+        case clipLengths = "clip_lengths", clipFraming = "clip_framing"
         case mode, clipsOnly = "clips_only"
     }
 
@@ -223,6 +241,8 @@ public struct Project: Codable, Hashable, Sendable {
         clips = value(.clips, 0)
         fullEdit = !value(.clipsOnly, false) && value(.fullEdit, true)
         clipCount = value(.clipCount, 5)
+        clipLengths = value(.clipLengths, [])
+        clipFraming = value(.clipFraming, .smart)
         clipMode = value(.clipMode, .best)
         clipAspect = value(.clipAspect, .portrait)
         clipResolution = value(.clipResolution, 1080)
@@ -269,11 +289,20 @@ public struct Project: Codable, Hashable, Sendable {
         try c.encode(!fullEdit && clips > 0, forKey: .clipsOnly)
         try c.encode(clips, forKey: .clips)
         try c.encode(clipCount, forKey: .clipCount)
+        try c.encode(clipLengths, forKey: .clipLengths)
+        try c.encode(clipFraming, forKey: .clipFraming)
         try c.encode(clipMode, forKey: .clipMode)
         try c.encode(clipAspect, forKey: .clipAspect)
         try c.encode(clipResolution, forKey: .clipResolution)
         try c.encode(clipFade, forKey: .clipFade)
         try c.encode(look, forKey: .look)
+    }
+
+    /// Short-clip lengths to export (each gets its own folder). Empty when clips are off.
+    public var socialLengths: [Double] {
+        guard clips > 0 else { return [] }
+        let lengths = clipLengths.isEmpty ? [clips] : clipLengths
+        return Array(Set(lengths.filter { $0 >= 3 && $0 <= 600 })).sorted()
     }
 
     /// Every excerpt to export: the audio_parts list, or the single bounce.

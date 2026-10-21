@@ -124,6 +124,27 @@ class PlannerTests(unittest.TestCase):
         self.assertTrue(all(a['end'] <= b['start'] + 1e-6 for a, b in zip(sequence, sequence[1:])))
 
 
+class ClipFramingTests(unittest.TestCase):
+    def camera(self, w, h, framing=None):
+        c = engine.Camera(Path('x.mov'), 'A', 10, 0, 0, 0, True, width=w, height=h)
+        c.framing = framing
+        return c
+
+    def test_smart_fits_wide_shots_and_crops_close_matches(self):
+        crop = {'mode': 'crop', 'center': [0.3, 0.5], 'zoom': 1, 'auto': False}
+        self.assertEqual(engine.clip_framing(self.camera(1920, 1080, crop), '9:16', 'smart')['mode'], 'fit')
+        self.assertEqual(engine.clip_framing(self.camera(1080, 1920, crop), '9:16', 'smart')['mode'], 'crop')
+        self.assertEqual(engine.clip_framing(self.camera(1920, 1080, crop), '16:9', 'smart')['mode'], 'crop')
+        self.assertEqual(engine.clip_framing(self.camera(1920, 1080, {'mode': 'fit'}), '9:16', 'crop')['mode'], 'crop')
+        self.assertEqual(engine.clip_framing(self.camera(1920, 1080, crop), '9:16', 'same'), crop)
+
+    def test_clip_lengths_parse(self):
+        self.assertEqual(engine.clip_lengths('30, 15,15,60'), [15.0, 30.0, 60.0])
+        for bad in ('', '2', 'x', '15,9999'):
+            with self.assertRaises(Exception):
+                engine.clip_lengths(bad)
+
+
 class FormatTests(unittest.TestCase):
     def test_frame_sizes(self):
         self.assertEqual(engine.frame_size('16:9', 2160), (3840, 2160))
@@ -161,18 +182,20 @@ class ClipExportTests(unittest.TestCase):
                 {'id': 'B', 'clips': [{'path': str(root / 'b.mov'), 'framing': {'mode': 'fit'}}]}]}), encoding='utf-8')
             with contextlib.redirect_stdout(io.StringIO()):
                 engine.main(['--project', str(project), '--audio', str(root / 'set.wav'), '--output-dir', str(root / 'out'),
-                             '--resolution', '720', '--clips', '7', '--clip-count', '2', '--clip-resolution', '720',
+                             '--resolution', '720', '--clips', '7,5', '--clip-count', '2', '--clip-resolution', '720',
                              '--clips-only', '--no-drift', '--preset', 'ultrafast', '--encoder', 'software', '--vision', 'off'])
             report = json.loads((root / 'out' / 'report_horizontal.json').read_text(encoding='utf-8'))
             self.assertEqual(report['status'], 'rendered')
             self.assertIsNone(report['outputs']['video'])
-            self.assertEqual(len(report['clips']), 2)
+            self.assertEqual(len(report['clips']), 4)
+            self.assertEqual(sorted({c['length'] for c in report['clips']}), [5, 7])
             for clip in report['clips']:
+                self.assertIn(f"_clips/{round(clip['length'])}s/", clip['path'])
                 info = engine.probe(Path(clip['path']))
                 video = next(s for s in info['streams'] if s['codec_type'] == 'video')
                 self.assertEqual((video['width'], video['height']), (720, 1280))
                 self.assertAlmostEqual(float(info['format']['duration']), clip['end'] - clip['start'], delta=0.1)
-            self.assertEqual(len(report['outputs']['videos']), 2)
+            self.assertEqual(len(report['outputs']['videos']), 4)
 
 
 class ServerTests(unittest.TestCase):
@@ -194,12 +217,17 @@ class ServerTests(unittest.TestCase):
             (root / 'a.mov').write_bytes(b'x'); (root / 'set.flac').write_bytes(b'x')
             base = {'cameras': [{'id': 'A', 'clips': [{'path': str(root / 'a.mov'), 'framing': {'mode': 'fit', 'auto': True}}]}],
                     'audio': str(root / 'set.flac'), 'output_dir': str(root / 'out')}
-            config = server.validate_config({**base, 'aspect': '4:5', 'resolution': 1080, 'codec': 'hevc', 'clips': 15})
+            config = server.validate_config({**base, 'aspect': '4:5', 'resolution': 1080, 'codec': 'hevc', 'clips': 15,
+                                             'clip_lengths': [60, 15, 30], 'clip_framing': 'fit'})
             self.assertEqual(config['mode'], 'vertical')
             command = server.command_for(config, root / 'report.json')
-            self.assertIn('--clips', command)
+            self.assertEqual(command[command.index('--clips') + 1], '15,30,60')
+            self.assertEqual(command[command.index('--clip-framing') + 1], 'fit')
+            # A Mac app project with clips switched off keeps them off.
+            self.assertEqual(server.validate_config({**base, 'clips': 0, 'clip_lengths': [15, 30]})['clip_lengths'], [])
+            self.assertEqual(server.validate_config({**base, 'clips': '15,30'})['clip_lengths'], [15, 30])
             self.assertEqual(command[command.index('--codec') + 1], 'hevc')
-            for bad in ({'aspect': '2:1'}, {'resolution': 999}, {'codec': 'vp9'}, {'clips': 1}):
+            for bad in ({'aspect': '2:1'}, {'resolution': 999}, {'codec': 'vp9'}, {'clips': 1}, {'clip_framing': 'zoom'}):
                 with self.assertRaises(ValueError):
                     server.validate_config({**base, **bad})
 

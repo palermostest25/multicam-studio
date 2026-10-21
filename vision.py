@@ -29,15 +29,9 @@ VERSION = 3
 
 
 def hardware_decoding():
-    """FFmpeg's VideoToolbox decoder on macOS; software elsewhere."""
-    if sys.platform != 'darwin' or not shutil.which('ffmpeg'):
-        return []
-    try:
-        listed = subprocess.run(['ffmpeg', '-hide_banner', '-hwaccels'], capture_output=True,
-                                text=True, timeout=10, encoding='utf-8', errors='replace').stdout
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return ['-hwaccel', 'videotoolbox'] if 'videotoolbox' in listed else []
+    """Hardware decoding arguments: VideoToolbox on macOS, CUDA with an NVIDIA GPU, else none."""
+    import hardware
+    return hardware.decode_args()
 
 
 def keyframes(path, hwaccel=None):

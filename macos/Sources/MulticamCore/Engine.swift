@@ -56,9 +56,12 @@ public struct PartAnalysis: Sendable {
 
 public struct PlannedClip: Sendable, Hashable, Identifiable {
     public var id: Int { index }
-    public var index: Int
+    public var index: Int            // unique across all lengths
+    public var number: Int           // 1, 2, 3… within its length
+    public var length: Double        // requested length in seconds
     public var window: ClipWindow
     public var shots: [Shot]
+    public var label: String { "\(Int(length.rounded())) s #\(number)" }
 }
 
 public struct EditPlan: Sendable {
@@ -67,6 +70,15 @@ public struct EditPlan: Sendable {
     public var sections: [MusicInfo.Section]
     public var total: Int
     public var fps: Int
+    /// The excerpt and synced recordings this plan was made for. Shot camera indices
+    /// point into exactly that analysis, so a plan must never be paired with another.
+    public var partPath: String = ""
+    public var clipCount: Int = 0
+
+    public func matches(_ analysis: PartAnalysis?) -> Bool {
+        guard let analysis else { return false }
+        return analysis.part.path == partPath && analysis.clips.count == clipCount
+    }
 }
 
 public struct RenderedOutput: Sendable, Hashable {
@@ -74,6 +86,7 @@ public struct RenderedOutput: Sendable, Hashable {
     public var kind: String          // "full" or "clip"
     public var start: Double
     public var end: Double
+    public var clipIndex: Int? = nil
 }
 
 /// Orchestrates analysis, planning and rendering. Used by the app and the mcstudio tool.
@@ -246,23 +259,25 @@ public final class Engine: @unchecked Sendable {
         shots = try Planner.applyOverrides(shots, cameras: cover, paths: analysis.clips.map(\.url.path),
                                            overrides: analysis.part.shotOverrides, fps: fps, duration: analysis.duration)
         var clips = [PlannedClip]()
-        if project.clips > 0 {
+        var short = Rhythm.shortForm
+        short.cutScale = project.cutScale
+        let forced = shots.filter { $0.reason == "manual shot override" }
+        for length in project.socialLengths {
             let windows = Planner.windows(music: analysis.music, cameras: cover, total: total, fps: fps,
-                                          length: project.clips, scores: scores)
+                                          length: length, scores: scores)
             let chosen = Planner.choose(windows, count: project.clipCount, mode: project.clipMode)
-            var short = Rhythm.shortForm
-            short.cutScale = project.cutScale
-            let forced = shots.filter { $0.reason == "manual shot override" }
             for (i, w) in chosen.enumerated() {
                 let range = Int((w.start * Double(fps)).rounded())..<Int((w.end * Double(fps)).rounded())
+                let serial = clips.count + 1
                 var plan = Planner.plan(cameras: cover, total: total, fps: fps, music: analysis.music, sections: sections,
-                                        activities: analysis.part.activities, seed: project.seed + i + 1, mainCamera: main,
+                                        activities: analysis.part.activities, seed: project.seed + serial, mainCamera: main,
                                         rhythm: short, window: range, scores: scores)
                 plan = Planner.overlay(plan, forced: forced, start: range.lowerBound, end: range.upperBound)
-                clips.append(PlannedClip(index: i + 1, window: w, shots: plan))
+                clips.append(PlannedClip(index: serial, number: i + 1, length: length, window: w, shots: plan))
             }
         }
-        return EditPlan(shots: shots, clips: clips, sections: sections, total: total, fps: fps)
+        return EditPlan(shots: shots, clips: clips, sections: sections, total: total, fps: fps,
+                        partPath: analysis.part.path, clipCount: analysis.clips.count)
     }
 
     // MARK: rendering
@@ -281,9 +296,38 @@ public final class Engine: @unchecked Sendable {
         return root.appendingPathComponent(String(format: "part_%03d_%@", partIndex, String(stem.prefix(40))), isDirectory: true)
     }
 
-    public static func clipName(_ base: String, _ index: Int, _ start: Double, _ ext: String) -> String {
-        let s = Int(start)
-        return String(format: "%@_%03d_%02d-%02d-%02d.%@", base, index, s / 3600, s / 60 % 60, s % 60, ext)
+    public static func clipName(_ base: String, _ clip: PlannedClip, _ ext: String) -> String {
+        let s = Int(clip.window.start)
+        return String(format: "%@_%02ds_%03d_%02d-%02d-%02d.%@", base, Int(clip.length.rounded()), clip.number,
+                      s / 3600, s / 60 % 60, s % 60, ext)
+    }
+
+    /// Recordings as framed in short clips (see ClipFraming).
+    public static func clipSources(_ clips: [SyncedClip], aspect: Aspect, mode: ClipFraming) -> [SyncedClip] {
+        clips.map { clip in
+            var c = clip
+            c.framing = clipFraming(clip.framing, info: clip.info, aspect: aspect, mode: mode)
+            return c
+        }
+    }
+
+    public static func clipFraming(_ f: Framing, info: MediaInfo, aspect: Aspect, mode: ClipFraming) -> Framing {
+        var crop = f
+        crop.mode = .crop
+        if f.mode != .crop { crop.auto = true; crop.zoom = 1 }
+        var fit = f
+        fit.mode = .fit
+        switch mode {
+        case .same: return f
+        case .fit: return fit
+        case .crop: return crop
+        case .smart:
+            // Share of the source picture a zoom-1 crop keeps: crop only near-matching shapes.
+            let (w, h) = aspect.ratio
+            let target = Double(w) / Double(h), source = info.aspect
+            let kept = min(target, source) / max(target, source)
+            return kept >= 0.55 ? (f.mode == .pad ? f : crop) : fit
+        }
     }
 
     /// Planned output files, so existing files can be checked before anything renders.
@@ -296,8 +340,9 @@ public final class Engine: @unchecked Sendable {
         }
         let clipFolder = folder.appendingPathComponent("\(base)_clips", isDirectory: true)
         for clip in plan.clips {
-            result.append(RenderedOutput(url: clipFolder.appendingPathComponent(clipName(base, clip.index, clip.window.start, ext)),
-                                         kind: "clip", start: clip.window.start, end: clip.window.end))
+            let lengthFolder = clipFolder.appendingPathComponent("\(Int(clip.length.rounded()))s", isDirectory: true)
+            result.append(RenderedOutput(url: lengthFolder.appendingPathComponent(clipName(base, clip, ext)),
+                                         kind: "clip", start: clip.window.start, end: clip.window.end, clipIndex: clip.index))
         }
         return result
     }
@@ -320,17 +365,18 @@ public final class Engine: @unchecked Sendable {
         for (n, output) in planned.enumerated() {
             try Task.checkCancellation()
             let isFull = output.kind == "full"
-            let clip = isFull ? nil : plan.clips.first { $0.window.start == output.start }
+            let clip = isFull ? nil : plan.clips.first { $0.index == output.clipIndex }
             let size = isFull ? project.aspect.size(resolution: project.resolution)
                               : project.clipAspect.size(resolution: project.clipResolution)
             let spec = OutputSpec(width: size.width, height: size.height, fps: plan.fps, codec: project.codec,
                                   crf: project.crf, look: project.look)
             let window = isFull ? 0..<plan.total
                 : Int((output.start * Double(plan.fps)).rounded())..<Int((output.end * Double(plan.fps)).rounded())
-            let title = isFull ? "Full edit" : "Clip \(clip!.index) of \(plan.clips.count)"
+            let title = isFull ? "Full edit" : "Clip \(clip!.index) of \(plan.clips.count) (\(clip!.label))"
             log("\(title): \(size.width)x\(size.height) \(project.codec.rawValue.uppercased()) → \(output.url.lastPathComponent)")
             let started = Date()
-            let edit = try await Renderer.prepare(shots: isFull ? plan.shots : clip!.shots, clips: analysis.clips,
+            let sources = isFull ? analysis.clips : Self.clipSources(analysis.clips, aspect: project.clipAspect, mode: project.clipFraming)
+            let edit = try await Renderer.prepare(shots: isFull ? plan.shots : clip!.shots, clips: sources,
                                                   bounce: bounce, window: window, spec: spec,
                                                   audioFade: isFull ? 0 : project.clipFade, declick: isFull ? 0 : 0.015)
             let base = doneWeight, weight = weights[n]
@@ -358,14 +404,14 @@ public final class Engine: @unchecked Sendable {
         lines += analysis.warnings.map { "WARNING: " + $0 }
         lines += ["", "#     IN -> OUT                      | ANGLE | FILE | REASON"]
         for (n, s) in plan.shots.enumerated() {
-            let name = s.camera.map { analysis.clips[$0].cameraID + " | " + analysis.clips[$0].url.lastPathComponent } ?? "BLACK | -"
+            let name = s.camera.flatMap { analysis.clips.indices.contains($0) ? analysis.clips[$0].cameraID + " | " + analysis.clips[$0].url.lastPathComponent : nil } ?? "BLACK | -"
             lines.append(String(format: "%04d  %@ -> %@ | %@ | %@", n + 1, Timecode.format(Double(s.start) / f),
                                 Timecode.format(min(analysis.duration, Double(s.end) / f)), name, s.reason))
         }
         for clip in plan.clips {
-            lines += ["", "Clip \(clip.index): \(Timecode.format(clip.window.start)) -> \(Timecode.format(clip.window.end))"]
+            lines += ["", "Clip \(clip.label): \(Timecode.format(clip.window.start)) -> \(Timecode.format(clip.window.end))"]
             for s in clip.shots {
-                let name = s.camera.map { analysis.clips[$0].cameraID } ?? "BLACK"
+                let name = s.camera.flatMap { analysis.clips.indices.contains($0) ? analysis.clips[$0].cameraID : nil } ?? "BLACK"
                 lines.append("  \(Timecode.format(Double(s.start) / f - clip.window.start)) \(name) \(s.reason)")
             }
         }

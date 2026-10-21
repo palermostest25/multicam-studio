@@ -1,0 +1,39 @@
+# Multicam Studio for Docker / Arcane with an NVIDIA GPU (for example a T1000).
+# Open http://<server>:4067. Every value is written here directly: no .env file.
+#
+# The host needs the NVIDIA driver and the NVIDIA Container Toolkit:
+#   https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
+#   sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+# Check with: docker run --rm --gpus all ubuntu nvidia-smi
+#
+# Renders then use NVENC (H.264/HEVC) and CUDA decoding automatically; Settings →
+# Help & diagnostics and the Output section show the encoder in use. Without a
+# working GPU the studio falls back to software encoding.
+services:
+  multicam-studio:
+    image: ghcr.io/palermostest25/multicam-studio:latest
+    build: .
+    container_name: multicam-studio
+    init: true                # reaps FFmpeg processes when a render is cancelled
+    restart: unless-stopped
+    user: "1000:1000"         # owner of the exported files (uid:gid)
+    ports:
+      - "4067:8765"
+    environment:
+      # No sign-in: only requests addressed to this host are accepted.
+      MULTICAM_ALLOWED_HOSTS: "192.168.1.10"
+      # MULTICAM_PASSWORD: "..."   # add only if exposed beyond the home network
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,video,utility"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video, compute, utility]
+    volumes:
+      # Create these first and chown them to the user above.
+      - /opt/Docker/appdata/multicam-studio/recordings:/media/recordings
+      - /opt/Docker/appdata/multicam-studio/exports:/media/exports
+      - /opt/Docker/appdata/multicam-studio/state:/state

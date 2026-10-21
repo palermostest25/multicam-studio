@@ -78,6 +78,9 @@ final class AppState: ObservableObject {
     var currentPart: AudioPart? { parts.indices.contains(selectedPart) ? parts[selectedPart] : nil }
     var currentAnalysis: PartAnalysis? { currentPart.flatMap { analyses[$0.path] } }
     var busy: Bool { phase != .idle }
+    /// The plan, but only while it belongs to the excerpt and recordings on screen. Its shot camera
+    /// indices point into that analysis; pairing it with another excerpt would index past the end.
+    var activePlan: EditPlan? { plan.flatMap { $0.matches(currentAnalysis) ? $0 : nil } }
     var hasSources: Bool { !parts.isEmpty && project.cameras.contains { !$0.clips.isEmpty } }
     var allAnalysed: Bool { !parts.isEmpty && parts.allSatisfy { analyses[$0.path] != nil } }
 
@@ -375,7 +378,11 @@ final class AppState: ObservableObject {
 
     func schedulePlan(immediately: Bool = false) {
         planTask?.cancel()
-        guard let analysis = currentAnalysis else { plan = nil; return }
+        guard let analysis = currentAnalysis else { plan = nil; player.replaceCurrentItem(with: nil); return }
+        if plan.map({ !$0.matches(analysis) }) ?? false {
+            plan = nil  // never show another excerpt's plan while this one is computed
+            player.replaceCurrentItem(with: nil)
+        }
         let project = self.project
         planTask = Task {
             if !immediately { try? await Task.sleep(nanoseconds: 250_000_000) }
@@ -386,6 +393,7 @@ final class AppState: ObservableObject {
             if Task.isCancelled { return }
             switch result {
             case .success(let plan):
+                guard plan.matches(currentAnalysis) else { return }  // the excerpt changed meanwhile
                 self.plan = plan
                 planError = nil
                 if case .clip(let i) = previewTarget, !plan.clips.contains(where: { $0.index == i }) { previewTarget = .full }
@@ -398,12 +406,13 @@ final class AppState: ObservableObject {
 
     func rebuildPreview() {
         previewTask?.cancel()
-        guard let plan, let analysis = currentAnalysis else { player.replaceCurrentItem(with: nil); return }
+        guard let plan = activePlan, let analysis = currentAnalysis else { player.replaceCurrentItem(with: nil); return }
         let project = self.project
         let target = previewTarget
         let time = player.currentTime()
         previewTask = Task {
             let shots: [Shot], window: Range<Int>, aspect: Aspect
+            var sources = analysis.clips
             switch target {
             case .full:
                 shots = plan.shots; window = 0..<plan.total; aspect = project.aspect
@@ -412,12 +421,13 @@ final class AppState: ObservableObject {
                 shots = clip.shots
                 window = Int((clip.window.start * Double(plan.fps)).rounded())..<Int((clip.window.end * Double(plan.fps)).rounded())
                 aspect = project.clipAspect
+                sources = Engine.clipSources(analysis.clips, aspect: aspect, mode: project.clipFraming)
             }
             // Preview at screen size: the same compositor as the export, just fewer pixels.
             let size = aspect.size(resolution: aspect == .landscape ? 540 : 720)
             let spec = OutputSpec(width: size.width, height: size.height, fps: plan.fps, codec: .h264, look: project.look)
             do {
-                let edit = try await Renderer.prepare(shots: shots, clips: analysis.clips, bounce: URL(fileURLWithPath: analysis.part.path),
+                let edit = try await Renderer.prepare(shots: shots, clips: sources, bounce: URL(fileURLWithPath: analysis.part.path),
                                                       window: window, spec: spec, audioFade: target == .full ? 0 : project.clipFade,
                                                       declick: target == .full ? 0 : 0.015)
                 if Task.isCancelled { return }
@@ -441,12 +451,12 @@ final class AppState: ObservableObject {
 
     /// Timeline seconds (bounce time) of the preview playhead.
     var previewOffset: Double {
-        if case .clip(let i) = previewTarget, let clip = plan?.clips.first(where: { $0.index == i }) { return clip.window.start }
+        if case .clip(let i) = previewTarget, let clip = activePlan?.clips.first(where: { $0.index == i }) { return clip.window.start }
         return 0
     }
 
     func seek(toTimeline t: Double) {
-        if case .clip(let i) = previewTarget, let clip = plan?.clips.first(where: { $0.index == i }),
+        if case .clip(let i) = previewTarget, let clip = activePlan?.clips.first(where: { $0.index == i }),
            !(clip.window.start...clip.window.end).contains(t) {
             previewTarget = .full
         }

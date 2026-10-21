@@ -72,7 +72,7 @@ public enum Renderer {
             let start = max(shot.start, window.lowerBound), end = min(shot.end, window.upperBound)
             guard end > start else { continue }
             let range = CMTimeRange(start: frameTime(start), end: frameTime(end))
-            guard let index = shot.camera else {
+            guard let index = shot.camera, clips.indices.contains(index) else {
                 instructions.append(MulticamInstruction(timeRange: range, trackID: nil, style: nil, look: spec.look, totalDuration: total))
                 continue
             }
