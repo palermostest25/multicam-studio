@@ -796,7 +796,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path in ('/','/index.html'):
                 body=(APP/'web/index.html').read_text(encoding='utf-8').replace('__MULTICAM_TOKEN__',json.dumps(self.studio.token)).encode()
                 return self.bytes_response(body,'text/html; charset=utf-8')
-            if u.path in ('/app.js','/app.css','/static/app.js','/static/app.css','/static/studio.css'):
+            if u.path in ('/app.js','/app.css','/static/app.js','/static/app.css','/static/studio.css','/static/glass.css'):
                 p=APP/'web'/u.path.rsplit('/',1)[-1]
                 return self.bytes_response(p.read_bytes(),'text/javascript' if p.suffix=='.js' else 'text/css')
             if u.path=='/api/config':
