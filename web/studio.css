@@ -19,3 +19,9 @@ body{font-size:15px}button,input,select,textarea{font-size:14px}label{font-size:
 @media(max-width:830px){.files-columns{grid-template-columns:1fr}.library-row{grid-template-columns:1fr}.library-actions{grid-column:1;grid-row:auto;justify-content:flex-start}}
 .library-actions a{font-size:13px;border:1px solid #404a36;background:#222a1c;border-radius:8px;padding:7px 11px;text-decoration:none;color:inherit}.library-actions .small{margin-top:0}
 #audio-active-label{margin:12px 0;color:var(--accent)}.audio-card>.help{margin:12px 0}.audio-part-results{display:grid;gap:10px;margin-top:12px}.audio-part-result{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--border);padding:12px 0}.audio-part-result strong{overflow-wrap:anywhere;min-width:0}.audio-part-result .excerpt-warning{flex-basis:100%;color:#e8c08f}.audio-part-result button{margin-left:auto}
+
+/* 2.0: four output shapes, social clips and server-only fields. */
+.format-icon.square{width:24px;height:24px}.format-icon.feed{width:21px;height:26px}
+.server-only{display:none}body.server-mode .server-only{display:block}
+#clip-settings{margin-top:8px}#clip-settings code{font-size:11px}
+.planned-clips{margin:14px 0;display:grid;gap:6px}.planned-clips h3{font-size:13px;margin:0 0 4px}.planned-clip{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;font-variant-numeric:tabular-nums}.planned-clip a{color:var(--accent);text-decoration:none}.planned-clip small{color:var(--muted)}

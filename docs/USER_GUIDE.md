@@ -1,5 +1,37 @@
 # Multicam Studio
 
+## What's new in 2.0
+
+**Mac users:** use the native app (see the README). It has the same editing ideas as the browser version below, with a live preview and much faster hardware rendering. The rest of this guide describes the browser version and the command-line engine, which run on macOS, Windows, Linux and in Docker.
+
+New controls in the browser version:
+
+- **Framing & format**: four output shapes (16:9 YouTube, 9:16 Reels/Shorts/TikTok, 1:1, 4:5 Instagram feed). Per recording: *Crop to fill the frame* (optionally **Follow the action**, which centres the crop on where the movement is), *Fit whole picture · blurred background* (no black bars), or *Fit whole picture · black bars*.
+- **Editing rhythm**: *Cutting style* **Smart** (default) cuts on bar lines, recognises breakdowns, builds and drops, and avoids poor camera pictures. **Classic** is the 1.x seeded planner. *Camera picture analysis* is automatic with hardware decoding (Mac) and can be forced on or off.
+- **Output**: full-edit size (4K/1440p/1080p/720p), video format (H.264, HEVC, ProRes), encoder (automatic, hardware, software) and how many shots render at once. In Docker, **Folder inside Exports** chooses where the videos go.
+- **Social clips**: length in seconds (snapped to whole bars), how many (0 = as many as fit), best moments or the whole set in order, shape, size, audio fade, and *Clips only*. Clips are saved in `<name>_clips` beside the full edit, named with their start time, and listed with download links in the results.
+
+New engine options (`multicam_edit.py --help`):
+
+| Flag | Meaning / default |
+|---|---|
+| `--aspect 16:9\|9:16\|1:1\|4:5` | Output shape; overrides `--mode` |
+| `--resolution 2160\|1440\|1080\|720` | Short side in pixels (default 2160) |
+| `--codec h264\|hevc\|prores`, `--container mp4\|mov` | Video format |
+| `--encoder auto\|hardware\|software` | VideoToolbox on macOS when available |
+| `--jobs N` | Shots encoded at once (0 = automatic) |
+| `--planner smart\|classic` | Beat- and picture-aware planning (default) or the 1.x planner |
+| `--vision auto\|on\|off`, `--cache-dir PATH` | Camera picture scoring and where its results are cached |
+| `--clips SECONDS` | Also export short clips of about this length |
+| `--clip-count N`, `--clip-mode best\|sequence` | How many, and which |
+| `--clip-aspect`, `--clip-resolution`, `--clip-fade` | Clip shape, size and audio fade |
+| `--clips-only` | Skip the full-length edit |
+| `--range START,END` | Render only part of the full edit (a quick preview) |
+
+`music.py AUDIO` prints the tempo, drops and sections the planner will use; `vision.py VIDEO` prints how much of a recording scores poorly.
+
+## Earlier guide (1.x, still applies to the browser version)
+
 A local browser interface and standalone Python editor for DJ sets with any number of camera angles. Add recordings and parts to each camera, choose the main angle, frame every clip, and plan cuts against the audio waveform. The audio bounce is the final timeline and the only output audio. Every recording part is independently aligned to that bounce. The original two-camera command-line workflow still works.
 
 ## Install the macOS app
