@@ -1,5 +1,10 @@
 # Changes
 
+## 2.1.3
+
+- Mac app: the preview keeps the exact shape of the edit (or the short clip you are previewing), so there are no black bands above and below the picture; the playback controls sit above it instead of over it.
+- Mac app: the sidebar calls the black-bars framing "Bars", like the Framing tab, and the Framing tab warns when Fit or Bars would leave most of the frame empty (for example a vertical phone recording in a 16:9 edit).
+
 ## 2.1.2
 
 - Mac app: changing a camera's framing (or look) updates the preview straight away, without re-planning the edit.

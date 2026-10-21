@@ -179,7 +179,7 @@ struct ClipRow: View {
                 .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            Text(clip.framing.mode == .crop ? (clip.framing.auto ? "Auto" : "Crop") : clip.framing.mode == .fit ? "Fit" : "Pad")
+            Text(clip.framing.mode == .crop ? (clip.framing.auto ? "Auto" : "Crop") : clip.framing.mode == .fit ? "Fit" : "Bars")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
