@@ -1,5 +1,11 @@
 # Changes
 
+## 2.1.2
+
+- Mac app: changing a camera's framing (or look) updates the preview straight away, without re-planning the edit.
+- Mac app: a restored project with all its files present is analysed on launch.
+- Web app: the Glass look and its header switch are gone; there is one clean look. The settings column is wider so option names fit, fields line up in pairs, the edit overview stats wrap without leaving one on its own row, the selected tab is the only highlighted one, and on phones the header buttons sit in one tidy row.
+
 ## 2.1.1
 
 - Mac app: **Liquid Glass** look (macOS 26+): the preview controls float over the video in glass capsules, with a glass status bar, timeline selection bar, buttons and clip-length chips. **Settings → Appearance** (or **View → Liquid Glass**, ⌥⌘G) switches back to the Classic look at any time; macOS 14–15 get the nearest material look.

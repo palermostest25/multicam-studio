@@ -365,6 +365,18 @@ public final class Engine: @unchecked Sendable {
                       s / 3600, s / 60 % 60, s % 60, ext)
     }
 
+    /// The synced recordings with the project's *current* framing. Analysis captures framing when it
+    /// runs; framing edited afterwards must still reach the preview and the export.
+    public static func currentSources(_ analysis: PartAnalysis, project: Project) -> [SyncedClip] {
+        var framing = [String: Framing]()
+        for camera in project.cameras { for clip in camera.clips { framing[clip.path] = clip.framing } }
+        return analysis.clips.map { clip in
+            var c = clip
+            if let f = framing[clip.url.path] { c.framing = f }
+            return c
+        }
+    }
+
     /// Recordings as framed in short clips (see ClipFraming).
     public static func clipSources(_ clips: [SyncedClip], aspect: Aspect, mode: ClipFraming) -> [SyncedClip] {
         clips.map { clip in
@@ -438,7 +450,8 @@ public final class Engine: @unchecked Sendable {
             let title = isFull ? "Full edit" : "Clip \(clip!.index) of \(plan.clips.count) (\(clip!.label))"
             log("\(title): \(size.width)x\(size.height) \(project.codec.rawValue.uppercased()) → \(output.url.lastPathComponent)")
             let started = Date()
-            let sources = isFull ? analysis.clips : Self.clipSources(analysis.clips, aspect: project.clipAspect, mode: project.clipFraming)
+            let current = Self.currentSources(analysis, project: project)
+            let sources = isFull ? current : Self.clipSources(current, aspect: project.clipAspect, mode: project.clipFraming)
             let edit = try await Renderer.prepare(shots: isFull ? plan.shots : clip!.shots, clips: sources,
                                                   bounce: bounce, window: window, spec: spec,
                                                   audioFade: isFull ? 0 : project.clipFade, declick: isFull ? 0 : 0.015)
