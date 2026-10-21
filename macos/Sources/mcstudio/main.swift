@@ -103,7 +103,9 @@ func run() async throws {
             }
             let social = Engine.socialFolder(project: project, partIndex: index + 1, partCount: parts.count, part: part)
             let outputs = try await engine.render(project: project, analysis: analysis, plan: plan, folder: folder,
-                                                  clipFolder: social) { title, fraction in
+                                                  clipFolder: social,
+                                                  alternativesFolder: Engine.socialFolder(project: project, partIndex: index + 1, partCount: parts.count,
+                                                                                          part: part, alternatives: true)) { title, fraction in
                 FileHandle.standardError.write(String(format: "\r%@ %3.0f%%", title, fraction * 100).data(using: .utf8)!)
             }
             print("")

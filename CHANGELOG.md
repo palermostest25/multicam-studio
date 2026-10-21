@@ -1,5 +1,9 @@
 # Changes
 
+## 2.3.0
+
+- **Social media alternatives** (on by default; Social clips settings in the Mac app and the browser). Every clip that uses a vertical recording is also saved in 9:16 in a `Social media alternatives` folder beside `Social media`, with the same subfolders and file names. The vertical camera fills the frame at its own shape and the wide cameras are shown whole with black bars, ready to upload to Instagram. Nothing else changes: the normal clips and full edits are exactly as before.
+
 ## 2.2.0
 
 - **Engine 1 / Engine 2** (Mac app: Edit tab; browser: Editing rhythm). Engine 1 is frozen exactly as in 2.1.3. Engine 2 (the default) is where improvements go:

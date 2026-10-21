@@ -93,7 +93,7 @@ public struct EditPlan: Sendable {
 
 public struct RenderedOutput: Sendable, Hashable {
     public var url: URL
-    public var kind: String          // "full" or "clip"
+    public var kind: String          // "full", "clip" or "alternative"
     public var start: Double
     public var end: Double
     public var clipIndex: Int? = nil
@@ -353,6 +353,9 @@ public final class Engine: @unchecked Sendable {
 
     /// Social clips from every part share one folder at the export root, so they can all be imported at once.
     public static let socialFolderName = "Social media"
+    /// Vertical copies of the clips that use a vertical recording (see alternativeSources).
+    public static let alternativesFolderName = "Social media alternatives"
+    public static let alternativeAspect = Aspect.portrait
 
     public static func outputFolder(project: Project, partIndex: Int, partCount: Int, part: AudioPart) -> URL {
         let root = URL(fileURLWithPath: (project.outputDir as NSString).expandingTildeInPath, isDirectory: true)
@@ -361,9 +364,10 @@ public final class Engine: @unchecked Sendable {
     }
 
     /// <export>/Social media[/part_00N_<audio>]; each clip length gets its own folder inside.
-    public static func socialFolder(project: Project, partIndex: Int, partCount: Int, part: AudioPart) -> URL {
+    public static func socialFolder(project: Project, partIndex: Int, partCount: Int, part: AudioPart,
+                                    alternatives: Bool = false) -> URL {
         let root = URL(fileURLWithPath: (project.outputDir as NSString).expandingTildeInPath, isDirectory: true)
-            .appendingPathComponent(socialFolderName, isDirectory: true)
+            .appendingPathComponent(alternatives ? alternativesFolderName : socialFolderName, isDirectory: true)
         guard partCount > 1 else { return root }
         return root.appendingPathComponent(partFolderName(partIndex: partIndex, part: part), isDirectory: true)
     }
@@ -395,6 +399,25 @@ public final class Engine: @unchecked Sendable {
     /// A clip that lands on the beat fades over the last part of its final beat, so it finishes cleanly.
     public static func clipFadeOut(_ window: ClipWindow) -> Double { window.tail * 0.6 }
 
+    /// Social media alternatives: vertical recordings fill the 9:16 frame at their own shape,
+    /// and every other recording is shown whole with black bars.
+    public static func alternativeSources(_ clips: [SyncedClip]) -> [SyncedClip] {
+        clips.map { clip in
+            var c = clip
+            if clip.info.aspect < 1 {
+                c.framing.mode = .crop; c.framing.zoom = 1; c.framing.auto = true
+            } else {
+                c.framing.mode = .pad
+            }
+            return c
+        }
+    }
+
+    /// Indices of the vertical recordings, as used by `Shot.camera`.
+    public static func verticalCameras(_ analysis: PartAnalysis) -> Set<Int> {
+        Set(analysis.clips.indices.filter { analysis.clips[$0].info.aspect < 1 })
+    }
+
     /// Recordings as framed in short clips (see ClipFraming).
     public static func clipSources(_ clips: [SyncedClip], aspect: Aspect, mode: ClipFraming) -> [SyncedClip] {
         clips.map { clip in
@@ -424,7 +447,8 @@ public final class Engine: @unchecked Sendable {
     }
 
     /// Planned output files, so existing files can be checked before anything renders.
-    public static func outputs(project: Project, plan: EditPlan, folder: URL, clipFolder: URL? = nil) -> [RenderedOutput] {
+    public static func outputs(project: Project, plan: EditPlan, folder: URL, clipFolder: URL? = nil,
+                               alternativesFolder: URL? = nil, vertical: Set<Int> = []) -> [RenderedOutput] {
         let base = baseName(project), ext = project.codec.fileExtension
         var result = [RenderedOutput]()
         if project.fullEdit {
@@ -437,12 +461,22 @@ public final class Engine: @unchecked Sendable {
             result.append(RenderedOutput(url: lengthFolder.appendingPathComponent(clipName(base, clip, ext)),
                                          kind: "clip", start: clip.window.start, end: clip.window.end, clipIndex: clip.index))
         }
+        if project.clipAlternatives && !vertical.isEmpty {
+            let altFolder = alternativesFolder ?? folder.appendingPathComponent(alternativesFolderName, isDirectory: true)
+            for clip in plan.clips where clip.shots.contains(where: { $0.camera.map(vertical.contains) ?? false }) {
+                let lengthFolder = altFolder.appendingPathComponent("\(Int(clip.length.rounded()))s", isDirectory: true)
+                result.append(RenderedOutput(url: lengthFolder.appendingPathComponent(clipName(base, clip, ext)),
+                                             kind: "alternative", start: clip.window.start, end: clip.window.end, clipIndex: clip.index))
+            }
+        }
         return result
     }
 
     public func render(project: Project, analysis: PartAnalysis, plan: EditPlan, folder: URL, clipFolder: URL? = nil,
+                       alternativesFolder: URL? = nil,
                        progress: @escaping @Sendable (String, Double) -> Void) async throws -> [RenderedOutput] {
-        let planned = Self.outputs(project: project, plan: plan, folder: folder, clipFolder: clipFolder)
+        let planned = Self.outputs(project: project, plan: plan, folder: folder, clipFolder: clipFolder,
+                                   alternativesFolder: alternativesFolder, vertical: Self.verticalCameras(analysis))
         if !project.overwrite, let existing = planned.first(where: { FileManager.default.fileExists(atPath: $0.url.path) }) {
             throw MulticamError("\(existing.url.lastPathComponent) already exists. Turn on “Replace existing files” or choose another folder or name.")
         }
@@ -457,19 +491,22 @@ public final class Engine: @unchecked Sendable {
         let bounce = URL(fileURLWithPath: analysis.part.path)
         for (n, output) in planned.enumerated() {
             try Task.checkCancellation()
-            let isFull = output.kind == "full"
+            let isFull = output.kind == "full", isAlternative = output.kind == "alternative"
             let clip = isFull ? nil : plan.clips.first { $0.index == output.clipIndex }
             let size = isFull ? project.aspect.size(resolution: project.resolution)
-                              : project.clipAspect.size(resolution: project.clipResolution)
+                : (isAlternative ? Self.alternativeAspect : project.clipAspect).size(resolution: project.clipResolution)
             let spec = OutputSpec(width: size.width, height: size.height, fps: plan.fps, codec: project.codec,
                                   crf: project.crf, look: project.look)
             let window = isFull ? 0..<plan.total
                 : Int((output.start * Double(plan.fps)).rounded())..<Int((output.end * Double(plan.fps)).rounded())
-            let title = isFull ? "Full edit" : "Clip \(clip!.index) of \(plan.clips.count) (\(clip!.label))"
+            let title = isFull ? "Full edit"
+                : "\(isAlternative ? "Alternative" : "Clip") \(clip!.index) of \(plan.clips.count) (\(clip!.label))"
             log("\(title): \(size.width)x\(size.height) \(project.codec.rawValue.uppercased()) → \(output.url.lastPathComponent)")
             let started = Date()
             let current = Self.currentSources(analysis, project: project)
-            let sources = isFull ? current : Self.clipSources(current, aspect: project.clipAspect, mode: project.clipFraming)
+            let sources = isFull ? current
+                : isAlternative ? Self.alternativeSources(current)
+                : Self.clipSources(current, aspect: project.clipAspect, mode: project.clipFraming)
             let edit = try await Renderer.prepare(shots: isFull ? plan.shots : clip!.shots, clips: sources,
                                                   bounce: bounce, window: window, spec: spec,
                                                   audioFade: isFull ? 0 : project.clipFade, declick: isFull ? 0 : 0.015,

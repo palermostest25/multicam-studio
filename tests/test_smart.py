@@ -187,14 +187,15 @@ class ClipExportTests(unittest.TestCase):
             samples = (dance_track(seconds=40, breakdown=(12, 20)) * 32767 * 0.5).astype('<i2')
             with wave.open(str(root / 'set.wav'), 'wb') as f:
                 f.setnchannels(1); f.setsampwidth(2); f.setframerate(8000); f.writeframes(samples.tobytes())
-            for name, colour in [('a', 'red'), ('b', 'blue')]:
-                subprocess.run(['ffmpeg', '-v', 'error', '-nostdin', '-y', '-f', 'lavfi', '-i', f'color=c={colour}:s=320x180:r=30:d=40',
+            for name, colour, size in [('a', 'red', '320x180'), ('b', 'blue', '320x180'), ('c', 'green', '180x320')]:
+                subprocess.run(['ffmpeg', '-v', 'error', '-nostdin', '-y', '-f', 'lavfi', '-i', f'color=c={colour}:s={size}:r=30:d=40',
                                 '-i', str(root / 'set.wav'), '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libx264', '-preset', 'ultrafast',
                                 '-c:a', 'pcm_s16le', '-t', '40', str(root / f'{name}.mov')], check=True)
             project = root / 'project.json'
             project.write_text(json.dumps({'cameras': [
                 {'id': 'A', 'clips': [{'path': str(root / 'a.mov'), 'framing': {'mode': 'crop'}}]},
-                {'id': 'B', 'clips': [{'path': str(root / 'b.mov'), 'framing': {'mode': 'fit'}}]}]}), encoding='utf-8')
+                {'id': 'B', 'clips': [{'path': str(root / 'b.mov'), 'framing': {'mode': 'fit'}}]},
+                {'id': 'C', 'clips': [{'path': str(root / 'c.mov'), 'framing': {'mode': 'pad'}}]}]}), encoding='utf-8')
             with contextlib.redirect_stdout(io.StringIO()):
                 engine.main(['--project', str(project), '--audio', str(root / 'set.wav'), '--output-dir', str(root / 'out'),
                              '--resolution', '720', '--clips', '7,5', '--clip-count', '2', '--clip-resolution', '720',
@@ -210,7 +211,25 @@ class ClipExportTests(unittest.TestCase):
                 video = next(s for s in info['streams'] if s['codec_type'] == 'video')
                 self.assertEqual((video['width'], video['height']), (720, 1280))
                 self.assertAlmostEqual(float(info['format']['duration']), clip['end'] - clip['start'], delta=0.1)
-            self.assertEqual(len(report['outputs']['videos']), 4)
+            self.assertEqual(len([v for v in report['outputs']['videos'] if not v.get('alternative')]), 4)
+            # Clips that use the vertical camera C also get a 9:16 copy in Social media alternatives.
+            alternatives = [c for c in report['clips'] if c.get('alternative_path')]
+            self.assertTrue(alternatives)
+            for clip in alternatives:
+                self.assertIn(f"/Social media alternatives/{round(clip['length'])}s/", clip['alternative_path'])
+                self.assertEqual(Path(clip['alternative_path']).name, Path(clip['path']).name)
+                info = engine.probe(Path(clip['alternative_path']))
+                video = next(s for s in info['streams'] if s['codec_type'] == 'video')
+                self.assertEqual((video['width'], video['height']), (720, 1280))
+
+    def test_social_media_alternatives_for_clips_with_vertical_footage(self):
+        base = dict(duration=100, video_start=0, format_start=0, audio_start=0, has_audio=True)
+        cams = [engine.Camera(Path('a.mov'), 'A', width=1920, height=1080, framing={'mode': 'fit'}, **base),
+                engine.Camera(Path('c.mov'), 'C', width=1080, height=1920, framing={'mode': 'pad'}, **base)]
+        self.assertEqual(engine.alternative_framing(cams[0])['mode'], 'pad')
+        tall = engine.alternative_framing(cams[1])
+        self.assertEqual((tall['mode'], tall['zoom']), ('crop', 1))
+        self.assertFalse(engine.is_vertical(cams[0])); self.assertTrue(engine.is_vertical(cams[1]))
 
 
 class ServerTests(unittest.TestCase):
