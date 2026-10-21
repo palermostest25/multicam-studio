@@ -50,6 +50,14 @@ struct FramingEditor: View {
     @State private var time: Double = 0.3
 
     var info: MediaInfo? { state.mediaInfo[path] }
+
+    /// Share of the output frame the whole picture covers with Fit or Bars.
+    var coverage: Double? {
+        guard let info, info.aspect > 0 else { return nil }
+        let out = aspect.size(resolution: 1080)
+        let target = Double(out.width) / Double(out.height)
+        return min(info.aspect / target, target / info.aspect)
+    }
     var focus: [Double]? { state.currentAnalysis?.clips.first { $0.url.path == path }?.focus }
 
     func update(_ change: (inout Framing) -> Void) {
@@ -83,6 +91,12 @@ struct FramingEditor: View {
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 Text("The whole picture is shown with black bars.").font(.caption).foregroundStyle(.secondary)
+            }
+            if framing.mode != .crop, let coverage, coverage < 0.6 {
+                Label(String(format: "This recording is %@, so it covers only about %d%% of a %@ frame. Crop fills the frame.",
+                             (info?.aspect ?? 1) < 1 ? "vertical" : "wide", Int((coverage * 100).rounded()), aspect.rawValue),
+                      systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
             }
         }
         .onAppear { loadFrame() }

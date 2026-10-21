@@ -19,6 +19,7 @@ struct ContentView: View {
                     Divider()
                     EditTimeline()
                         .frame(minHeight: 190, idealHeight: 230)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     WelcomeView()
                 }

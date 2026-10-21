@@ -54,27 +54,27 @@ struct PreviewPane: View {
     @AppStorage(Appearance.key) private var glass = true
 
     var body: some View {
-        Group {
-            if glass {
-                // Liquid Glass: the controls float over the picture.
-                ZStack(alignment: .top) {
-                    stage
-                    header
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .glassGroup(spacing: 10)
-                        .padding(10)
-                }
-            } else {
-                VStack(spacing: 0) {
-                    header
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                    stage
-                }
-            }
+        // The controls sit above the picture, and the picture keeps the output's exact shape,
+        // centred on the window background, so there are no black bands around it.
+        VStack(spacing: 0) {
+            header
+                .padding(.horizontal, glass ? 10 : 12)
+                .padding(.vertical, 8)
+                .glassGroup(spacing: 10)
+            stage
+                .aspectRatio(shape, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding([.horizontal, .bottom], 8)
         }
         .frame(minHeight: 260)
+    }
+
+    /// Width ÷ height of what the player shows: the full edit or the selected short clip.
+    var shape: CGFloat {
+        let aspect: Aspect = if case .clip = state.previewTarget { state.project.clipAspect } else { state.project.aspect }
+        let (w, h) = aspect.ratio
+        return CGFloat(w) / CGFloat(h)
     }
 
     var header: some View {
