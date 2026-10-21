@@ -111,6 +111,8 @@ git merge --no-ff upstream/main            # merge commit, never rebase
 - This is the Mac release. `desktop.py` and `packaging/` (the 1.x PyInstaller app) stay as upstream has them, but README/releases point to the native app. GitHub releases: `v2.x.y` tags with `Multicam-Studio-<version>-macOS.dmg`.
 - Local test builds signed with the owner's Apple Development identity keep the macOS "removable volume" permission between builds; ad-hoc builds ask again each time.
 - `EditPlan` records `partPath`/`clipCount`, and the app only uses `AppState.activePlan` (a plan that `matches` the current analysis). Shot camera indices point into one specific analysis; pairing a plan with another excerpt crashed 2.0.0 (index out of range in PlanSummary).
+- Appearance: `Glass.swift` holds the Liquid Glass helpers (`glassSurface`/`glassCapsule`/`glassButton`/`glassGroup`), all gated by `@AppStorage("liquidGlass")` (default on) with `#available(macOS 26)` fallbacks. Classic mode must stay exactly the 2.1.0 look, so new custom chrome goes through these helpers with a `classic:` style.
+- Sidebar selection is one `String?`: `"audio:<path>"` for excerpts, a file path for recordings.
 - The owner's installed copy is `/Applications/Multicam Studio.app` (signed with the Apple Development identity). The 1.x app was renamed to `/Applications/Multicam Studio 1.x.app`.
 
 ### New requirements from upstream

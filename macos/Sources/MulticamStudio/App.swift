@@ -31,6 +31,9 @@ struct MulticamStudioApp: App {
                 Button("Save Project") { state.save() }.keyboardShortcut("s")
                 Button("Save Project As…") { state.save(as: true) }.keyboardShortcut("s", modifiers: [.command, .shift])
             }
+            CommandGroup(after: .toolbar) {
+                AppearanceMenu()
+            }
             CommandMenu("Edit Video") {
                 Button("Sync & Analyse") { state.analyse() }.keyboardShortcut("r").disabled(state.busy || !state.hasSources)
                 Button("Shuffle Cuts") { state.shuffle() }.keyboardShortcut("j")
@@ -72,8 +75,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
+    @AppStorage(Appearance.key) private var glass = true
     var body: some View {
         Form {
+            Picker("Appearance", selection: $glass) {
+                Text("Liquid Glass").tag(true)
+                Text("Classic").tag(false)
+            }
+            .pickerStyle(.segmented)
+            if !Appearance.supported {
+                Text("Liquid Glass needs macOS 26 or later; here it uses the closest material look.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Picker("Camera picture analysis", selection: $state.project.vision) {
                 Text("On (recommended)").tag("auto")
                 Text("Off").tag("off")
@@ -86,5 +99,13 @@ struct SettingsView: View {
         }
         .padding(20)
         .frame(width: 440)
+    }
+}
+
+struct AppearanceMenu: View {
+    @AppStorage(Appearance.key) private var glass = true
+    var body: some View {
+        Toggle("Liquid Glass", isOn: $glass)
+            .keyboardShortcut("g", modifiers: [.command, .option])
     }
 }

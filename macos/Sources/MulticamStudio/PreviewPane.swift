@@ -51,56 +51,96 @@ struct Transport: View {
 
 struct PreviewPane: View {
     @EnvironmentObject var state: AppState
+    @AppStorage(Appearance.key) private var glass = true
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                if let plan = state.activePlan {
-                    Transport()
-                    Picker("Preview", selection: $state.previewTarget) {
-                        Text("Full edit · \(state.project.aspect.rawValue)").tag(PreviewTarget.full)
-                        ForEach(plan.clips) { clip in
-                            Text("\(clip.label) · \(Timecode.short(clip.window.start))")
-                                .tag(PreviewTarget.clip(clip.index))
-                        }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                    Spacer(minLength: 8)
-                    ViewThatFits(in: .horizontal) {
-                        PlanSummary(plan: plan, detailed: true)
-                        PlanSummary(plan: plan, detailed: false)
-                        Color.clear.frame(width: 0, height: 0)
-                    }
-                } else {
-                    Text(state.currentAnalysis == nil ? "Preview" : "Planning…").font(.headline)
-                    Spacer()
+        Group {
+            if glass {
+                // Liquid Glass: the controls float over the picture.
+                ZStack(alignment: .top) {
+                    stage
+                    header
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .glassGroup(spacing: 10)
+                        .padding(10)
                 }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            ZStack {
-                Color.black
-                if state.activePlan != nil {
-                    PlayerView(player: state.player)
-                } else if state.phase == .analysing {
-                    VStack(spacing: 10) {
-                        ProgressView()
-                        Text(state.status).foregroundStyle(.secondary)
-                    }
-                } else {
-                    VStack(spacing: 12) {
-                        Image(systemName: "play.rectangle").font(.system(size: 40, weight: .light)).foregroundStyle(.secondary)
-                        Text("Sync & Analyse to see the edit here, ready to play before you export.")
-                            .foregroundStyle(.secondary)
-                        Button("Sync & Analyse") { state.analyse() }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(state.busy)
-                    }
+            } else {
+                VStack(spacing: 0) {
+                    header
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                    stage
                 }
             }
         }
         .frame(minHeight: 260)
+    }
+
+    var header: some View {
+        HStack(spacing: 10) {
+            if let plan = state.activePlan {
+                Transport()
+                    .padding(.horizontal, glass ? 12 : 0)
+                    .padding(.vertical, glass ? 7 : 0)
+                    .glassCapsule(interactive: true)
+                Picker("Preview", selection: $state.previewTarget) {
+                    Text("Full edit · \(state.project.aspect.rawValue)").tag(PreviewTarget.full)
+                    ForEach(plan.clips) { clip in
+                        Text("\(clip.label) · \(Timecode.short(clip.window.start))")
+                            .tag(PreviewTarget.clip(clip.index))
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .padding(.horizontal, glass ? 6 : 0)
+                .padding(.vertical, glass ? 3 : 0)
+                .glassCapsule(interactive: true)
+                Spacer(minLength: 8)
+                ViewThatFits(in: .horizontal) {
+                    PlanSummary(plan: plan, detailed: true)
+                    PlanSummary(plan: plan, detailed: false)
+                    Color.clear.frame(width: 0, height: 0)
+                }
+                .padding(.horizontal, glass ? 12 : 0)
+                .padding(.vertical, glass ? 7 : 0)
+                .glassCapsule()
+            } else {
+                Text(state.currentAnalysis == nil ? "Preview" : "Planning…")
+                    .font(.headline)
+                    .padding(.horizontal, glass ? 14 : 0)
+                    .padding(.vertical, glass ? 7 : 0)
+                    .glassCapsule()
+                Spacer()
+            }
+        }
+    }
+
+    var stage: some View {
+        ZStack {
+            Color.black
+            if state.activePlan != nil {
+                PlayerView(player: state.player)
+            } else if state.phase == .analysing {
+                VStack(spacing: 10) {
+                    ProgressView()
+                    Text(state.status).foregroundStyle(.secondary)
+                }
+                .padding(glass ? 22 : 0)
+                .glassSurface(RoundedRectangle(cornerRadius: 20))
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "play.rectangle").font(.system(size: 40, weight: .light)).foregroundStyle(.secondary)
+                    Text("Sync & Analyse to see the edit here, ready to play before you export.")
+                        .foregroundStyle(.secondary)
+                    Button("Sync & Analyse") { state.analyse() }
+                        .glassButton(prominent: true)
+                        .disabled(state.busy)
+                }
+                .padding(glass ? 26 : 0)
+                .glassSurface(RoundedRectangle(cornerRadius: 24))
+            }
+        }
     }
 }
 

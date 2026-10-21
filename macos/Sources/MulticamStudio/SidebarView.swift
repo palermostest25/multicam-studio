@@ -5,10 +5,27 @@ struct SidebarView: View {
     @EnvironmentObject var state: AppState
 
     var body: some View {
-        List(selection: Binding(get: { state.selectedClipPath }, set: { state.selectedClipPath = $0; if $0 != nil { state.inspectorTab = "framing" } })) {
+        // One selection for the whole sidebar: "audio:<path>" for an excerpt, a file path for a
+        // camera recording. The highlight then always matches what is loaded.
+        List(selection: Binding<String?>(get: {
+            state.selectedClipPath ?? state.currentPart.map { "audio:" + $0.path }
+        }, set: { value in
+            guard let value else { return }
+            if value.hasPrefix("audio:") {
+                let path = String(value.dropFirst(6))
+                state.selectedClipPath = nil
+                if let index = state.parts.firstIndex(where: { $0.path == path }), index != state.selectedPart {
+                    state.selectedPart = index
+                    state.schedulePlan(immediately: true)
+                }
+            } else {
+                state.selectedClipPath = value
+                state.inspectorTab = "framing"
+            }
+        })) {
             Section {
                 ForEach(Array(state.parts.enumerated()), id: \.element.path) { index, part in
-                    AudioRow(part: part, index: index)
+                    AudioRow(part: part, index: index).tag("audio:" + part.path)
                 }
                 Button { state.addAudio(state.pickFiles(audio: true)) } label: {
                     Label(state.parts.isEmpty ? "Add audio…" : "Add another excerpt…", systemImage: "plus")
@@ -81,9 +98,7 @@ struct AudioRow: View {
             Spacer(minLength: 0)
         }
         .contentShape(Rectangle())
-        .onTapGesture { state.selectedPart = index; state.schedulePlan(immediately: true) }
         .padding(.vertical, 2)
-        .listRowBackground(state.selectedPart == index && state.parts.count > 1 ? Color.accentColor.opacity(0.12) : nil)
         .contextMenu {
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             Button("Remove", role: .destructive) { state.removeAudio(part.path) }
