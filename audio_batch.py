@@ -59,7 +59,11 @@ def validate_config(raw):
         social = (parent_output / 'Social media' / f'part_{index:03d}_{stem}').resolve()
         if any(p.is_relative_to(social) for p in inputs):
             raise ValueError('The social media folder contains an input. Choose a different output folder.')
-        part.update(output_dir=str(destination), output_name=f'{prefix[:100]}_part_{index:03d}', clips_dir=str(social))
+        alternatives = (parent_output / 'Social media alternatives' / f'part_{index:03d}_{stem}').resolve()
+        if any(p.is_relative_to(alternatives) for p in inputs):
+            raise ValueError('The social media alternatives folder contains an input. Choose a different output folder.')
+        part.update(output_dir=str(destination), output_name=f'{prefix[:100]}_part_{index:03d}', clips_dir=str(social),
+                    alternatives_dir=str(alternatives))
     return {**first, 'audio': first['audio'], 'output_dir': str(Path(base['output_dir']).expanduser().resolve()),
             'output_name': prefix, 'audio_parts': [dict(path=p['audio'], **{key: p[key] for key in TIMING_KEYS}) for p in checked],
             'part_configs': checked}

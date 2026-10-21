@@ -285,7 +285,18 @@ final class EndToEndTests: XCTestCase {
         XCTAssertEqual(Set(plan.clips.map(\.length)), [7, 10])
         let outputs = try await engine.render(project: project, analysis: analysis, plan: plan,
                                               folder: URL(fileURLWithPath: project.outputDir)) { _, _ in }
-        XCTAssertEqual(outputs.count, 5)
+        XCTAssertEqual(outputs.count, 5)   // no vertical recordings: no alternatives
+        let out = URL(fileURLWithPath: project.outputDir)
+        let alternatives = Engine.outputs(project: project, plan: plan, folder: out, vertical: [0]).filter { $0.kind == "alternative" }
+        XCTAssertEqual(alternatives.count, plan.clips.filter { $0.shots.contains { $0.camera == 0 } }.count)
+        XCTAssertFalse(alternatives.isEmpty)
+        XCTAssertTrue(alternatives.allSatisfy { $0.url.path.contains("/Social media alternatives/") })
+        var off = project; off.clipAlternatives = false
+        XCTAssertTrue(Engine.outputs(project: off, plan: plan, folder: out, vertical: [0]).allSatisfy { $0.kind != "alternative" })
+        var tall = analysis.clips[0]; tall.info.orientedSize = CGSize(width: 1080, height: 1920)
+        let framed = Engine.alternativeSources([tall, analysis.clips[1]])
+        XCTAssertEqual(framed[0].framing.mode, .crop); XCTAssertEqual(framed[0].framing.zoom, 1)
+        XCTAssertEqual(framed[1].framing.mode, .pad)
         XCTAssertTrue(outputs.contains { $0.url.path.contains("/Social media/10s/") })
         let parts = [AudioPart(path: "/x/set one.wav"), AudioPart(path: "/x/set two.wav")]
         XCTAssertEqual(Engine.socialFolder(project: project, partIndex: 2, partCount: 2, part: parts[1]).path,

@@ -291,6 +291,9 @@ struct ExportSettings: View {
                      ? "Lengths are a guide: a 15 s clip is 8 bars, then it lands the next downbeat and lets it ring for a beat (about 15½ s at 128 BPM). Engine 1 stops at the bar line instead."
                      : "Lengths are a guide: a 15 s clip is 8 bars and stops right at the next bar line (Engine 1). Engine 2 lands the next downbeat.")
                     .font(.caption).foregroundStyle(.secondary)
+                Toggle("Social media alternatives", isOn: $state.project.clipAlternatives)
+                Text("Clips that use a vertical recording are also saved in 9:16 in a Social media alternatives folder: the vertical camera fills the frame and the wide cameras are shown whole with black bars.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Picker("Choose", selection: $state.project.clipMode) {
                     ForEach(ClipMode.allCases) { Text($0.title).tag($0) }
                 }

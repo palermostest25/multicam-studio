@@ -48,7 +48,7 @@ else:
     import fcntl
 
 APP = Path(__file__).resolve().parent
-VERSION = '2.2.0'
+VERSION = '2.3.0'
 APP_ID = 'com.multicamstudio.desktop'
 DISCONNECTS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)
 _RUNNING_SERVER = None
@@ -142,6 +142,7 @@ def validate_config(raw):
         raise ValueError('Expected editing settings.')
     c = dict(raw)
     c.pop('clips_dir', None)  # set only by audio_batch, never by the browser
+    c.pop('alternatives_dir', None)
     all_inputs = []
     cameras = c.get('cameras')
     if cameras is not None:
@@ -250,6 +251,8 @@ def validate_config(raw):
     c['clip_count']=finite(c.get('clip_count',5),'Clip count',0,500,True)
     c['clip_fade']=finite(c.get('clip_fade',0),'Clip fade',0,5)
     c['jobs']=finite(c.get('jobs',0),'Parallel shots',0,16,True)
+    c['clip_alternatives']=c.get('clip_alternatives',True)
+    if not isinstance(c['clip_alternatives'],bool):raise ValueError('Social media alternatives must be on or off.')
     c['clips_only']=c.get('clips_only',False)
     if not isinstance(c['clips_only'],bool):raise ValueError('clips_only must be on or off.')
     if c['clips_only'] and not c['clips']:raise ValueError('Choose a clip length to export clips only.')
@@ -347,11 +350,13 @@ def command_for(c, report):
                 'codec','container','encoder','planner','vision','jobs','engine'):
         if key in c:cmd += ['--'+key.replace('_','-'),str(c[key])]
     if c.get('clips_dir'):cmd += ['--clips-dir',c['clips_dir']]
+    if c.get('alternatives_dir'):cmd += ['--alternatives-dir',c['alternatives_dir']]
     if c.get('clips'):
         cmd += ['--clips',','.join(f'{x:g}' for x in c.get('clip_lengths') or [c['clips']]),'--clip-framing',c.get('clip_framing','smart'),
                 '--clip-count',str(c['clip_count']),'--clip-mode',c['clip_mode'],
                 '--clip-aspect',c['clip_aspect'],'--clip-resolution',str(c['clip_resolution']),'--clip-fade',str(c['clip_fade'])]
         if c.get('clips_only'):cmd.append('--clips-only')
+        if not c.get('clip_alternatives',True):cmd.append('--no-clip-alternatives')
     if c.get('cache_dir'):cmd += ['--cache-dir',c['cache_dir']]
     for key in ('a_center','b_center','main_hold','cutaway_hold','drop_hold','breakdown_hold'):
         cmd += ['--'+key.replace('_','-')]+list(map(str,c[key]))

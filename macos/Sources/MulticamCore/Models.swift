@@ -202,6 +202,7 @@ public struct Project: Codable, Hashable, Sendable {
     public var clipLengths: [Double] = []
     public var clipFraming: ClipFraming = .smart
     public var engine: EngineVersion = .two
+    public var clipAlternatives = true
     public var clipCount: Int = 5
     public var clipMode: ClipMode = .best
     public var clipAspect: Aspect = .portrait
@@ -220,7 +221,7 @@ public struct Project: Codable, Hashable, Sendable {
         case aspect, resolution, codec, crf, planner, vision, clips, look
         case fullEdit = "full_edit", clipCount = "clip_count", clipMode = "clip_mode"
         case clipAspect = "clip_aspect", clipResolution = "clip_resolution", clipFade = "clip_fade"
-        case clipLengths = "clip_lengths", clipFraming = "clip_framing", engine
+        case clipLengths = "clip_lengths", clipFraming = "clip_framing", engine, clipAlternatives = "clip_alternatives"
         case mode, clipsOnly = "clips_only"
     }
 
@@ -263,6 +264,7 @@ public struct Project: Codable, Hashable, Sendable {
         clipLengths = value(.clipLengths, [])
         clipFraming = value(.clipFraming, .smart)
         engine = value(.engine, .two)
+        clipAlternatives = value(.clipAlternatives, true)
         clipMode = value(.clipMode, .best)
         clipAspect = value(.clipAspect, .portrait)
         clipResolution = value(.clipResolution, 1080)
@@ -312,6 +314,7 @@ public struct Project: Codable, Hashable, Sendable {
         try c.encode(clipLengths, forKey: .clipLengths)
         try c.encode(clipFraming, forKey: .clipFraming)
         try c.encode(engine, forKey: .engine)
+        try c.encode(clipAlternatives, forKey: .clipAlternatives)
         try c.encode(clipMode, forKey: .clipMode)
         try c.encode(clipAspect, forKey: .clipAspect)
         try c.encode(clipResolution, forKey: .clipResolution)
