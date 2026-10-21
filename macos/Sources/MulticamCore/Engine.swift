@@ -327,7 +327,7 @@ public final class Engine: @unchecked Sendable {
         let forced = shots.filter { $0.reason == "manual shot override" }
         for length in project.socialLengths {
             let windows = Planner.windows(music: analysis.music, cameras: cover, total: total, fps: fps,
-                                          length: length, scores: scores)
+                                          length: length, scores: scores, ending: project.engine.clipEnding)
             let chosen = Planner.choose(windows, count: project.clipCount, mode: project.clipMode)
             for (i, w) in chosen.enumerated() {
                 let range = Int((w.start * Double(fps)).rounded())..<Int((w.end * Double(fps)).rounded())
@@ -351,12 +351,27 @@ public final class Engine: @unchecked Sendable {
         return project.aspect == .portrait ? "multicam_cut_vertical" : "multicam_cut"
     }
 
+    /// Social clips from every part share one folder at the export root, so they can all be imported at once.
+    public static let socialFolderName = "Social media"
+
     public static func outputFolder(project: Project, partIndex: Int, partCount: Int, part: AudioPart) -> URL {
         let root = URL(fileURLWithPath: (project.outputDir as NSString).expandingTildeInPath, isDirectory: true)
         guard partCount > 1 else { return root }
+        return root.appendingPathComponent(partFolderName(partIndex: partIndex, part: part), isDirectory: true)
+    }
+
+    /// <export>/Social media[/part_00N_<audio>]; each clip length gets its own folder inside.
+    public static func socialFolder(project: Project, partIndex: Int, partCount: Int, part: AudioPart) -> URL {
+        let root = URL(fileURLWithPath: (project.outputDir as NSString).expandingTildeInPath, isDirectory: true)
+            .appendingPathComponent(socialFolderName, isDirectory: true)
+        guard partCount > 1 else { return root }
+        return root.appendingPathComponent(partFolderName(partIndex: partIndex, part: part), isDirectory: true)
+    }
+
+    static func partFolderName(partIndex: Int, part: AudioPart) -> String {
         let stem = URL(fileURLWithPath: part.path).deletingPathExtension().lastPathComponent
             .replacingOccurrences(of: "[^A-Za-z0-9._-]+", with: "_", options: .regularExpression)
-        return root.appendingPathComponent(String(format: "part_%03d_%@", partIndex, String(stem.prefix(40))), isDirectory: true)
+        return String(format: "part_%03d_%@", partIndex, String(stem.prefix(40)))
     }
 
     public static func clipName(_ base: String, _ clip: PlannedClip, _ ext: String) -> String {
@@ -376,6 +391,9 @@ public final class Engine: @unchecked Sendable {
             return c
         }
     }
+
+    /// A clip that lands on the beat fades over the last part of its final beat, so it finishes cleanly.
+    public static func clipFadeOut(_ window: ClipWindow) -> Double { window.tail * 0.6 }
 
     /// Recordings as framed in short clips (see ClipFraming).
     public static func clipSources(_ clips: [SyncedClip], aspect: Aspect, mode: ClipFraming) -> [SyncedClip] {
@@ -406,14 +424,14 @@ public final class Engine: @unchecked Sendable {
     }
 
     /// Planned output files, so existing files can be checked before anything renders.
-    public static func outputs(project: Project, plan: EditPlan, folder: URL) -> [RenderedOutput] {
+    public static func outputs(project: Project, plan: EditPlan, folder: URL, clipFolder: URL? = nil) -> [RenderedOutput] {
         let base = baseName(project), ext = project.codec.fileExtension
         var result = [RenderedOutput]()
         if project.fullEdit {
             result.append(RenderedOutput(url: folder.appendingPathComponent("\(base).\(ext)"), kind: "full",
                                          start: 0, end: Double(plan.total) / Double(plan.fps)))
         }
-        let clipFolder = folder.appendingPathComponent("\(base)_clips", isDirectory: true)
+        let clipFolder = clipFolder ?? folder.appendingPathComponent(socialFolderName, isDirectory: true)
         for clip in plan.clips {
             let lengthFolder = clipFolder.appendingPathComponent("\(Int(clip.length.rounded()))s", isDirectory: true)
             result.append(RenderedOutput(url: lengthFolder.appendingPathComponent(clipName(base, clip, ext)),
@@ -422,9 +440,9 @@ public final class Engine: @unchecked Sendable {
         return result
     }
 
-    public func render(project: Project, analysis: PartAnalysis, plan: EditPlan, folder: URL,
+    public func render(project: Project, analysis: PartAnalysis, plan: EditPlan, folder: URL, clipFolder: URL? = nil,
                        progress: @escaping @Sendable (String, Double) -> Void) async throws -> [RenderedOutput] {
-        let planned = Self.outputs(project: project, plan: plan, folder: folder)
+        let planned = Self.outputs(project: project, plan: plan, folder: folder, clipFolder: clipFolder)
         if !project.overwrite, let existing = planned.first(where: { FileManager.default.fileExists(atPath: $0.url.path) }) {
             throw MulticamError("\(existing.url.lastPathComponent) already exists. Turn on “Replace existing files” or choose another folder or name.")
         }
@@ -454,7 +472,8 @@ public final class Engine: @unchecked Sendable {
             let sources = isFull ? current : Self.clipSources(current, aspect: project.clipAspect, mode: project.clipFraming)
             let edit = try await Renderer.prepare(shots: isFull ? plan.shots : clip!.shots, clips: sources,
                                                   bounce: bounce, window: window, spec: spec,
-                                                  audioFade: isFull ? 0 : project.clipFade, declick: isFull ? 0 : 0.015)
+                                                  audioFade: isFull ? 0 : project.clipFade, declick: isFull ? 0 : 0.015,
+                                                  audioFadeOut: isFull ? 0 : Self.clipFadeOut(clip!.window))
             let base = doneWeight, weight = weights[n]
             try await Renderer.export(edit, to: output.url, spec: spec) { fraction in
                 progress(title, (base + fraction * weight) / totalWeight)

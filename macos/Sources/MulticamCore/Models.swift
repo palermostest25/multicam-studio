@@ -129,6 +129,24 @@ public enum VideoCodec: String, Codable, CaseIterable, Identifiable, Sendable {
 
 /// How recordings are framed in short clips. Cropping wide footage to 9:16 often cuts off
 /// the DJ, so "smart" fits wide shots over a blurred fill and only crops near-matching shapes.
+/// Where a short clip stops. The length is a guide either way: clips are whole bars.
+public enum ClipEnding: String, Codable, Sendable {
+    case beat, bar
+}
+
+/// Editing engine. Engine 1 is frozen exactly as shipped in 2.1.3; changes go into Engine 2.
+public enum EngineVersion: Int, Codable, CaseIterable, Identifiable, Sendable {
+    case one = 1, two = 2
+    public var id: Int { rawValue }
+    public var title: String {
+        switch self {
+        case .one: "Engine 1 (clips stop at the bar line)"
+        case .two: "Engine 2 (clips land on the beat)"
+        }
+    }
+    public var clipEnding: ClipEnding { self == .one ? .bar : .beat }
+}
+
 public enum ClipFraming: String, Codable, CaseIterable, Identifiable, Sendable {
     case smart, fit, crop, same
     public var id: String { rawValue }
@@ -183,6 +201,7 @@ public struct Project: Codable, Hashable, Sendable {
     public var clips: Double = 0
     public var clipLengths: [Double] = []
     public var clipFraming: ClipFraming = .smart
+    public var engine: EngineVersion = .two
     public var clipCount: Int = 5
     public var clipMode: ClipMode = .best
     public var clipAspect: Aspect = .portrait
@@ -201,7 +220,7 @@ public struct Project: Codable, Hashable, Sendable {
         case aspect, resolution, codec, crf, planner, vision, clips, look
         case fullEdit = "full_edit", clipCount = "clip_count", clipMode = "clip_mode"
         case clipAspect = "clip_aspect", clipResolution = "clip_resolution", clipFade = "clip_fade"
-        case clipLengths = "clip_lengths", clipFraming = "clip_framing"
+        case clipLengths = "clip_lengths", clipFraming = "clip_framing", engine
         case mode, clipsOnly = "clips_only"
     }
 
@@ -243,6 +262,7 @@ public struct Project: Codable, Hashable, Sendable {
         clipCount = value(.clipCount, 5)
         clipLengths = value(.clipLengths, [])
         clipFraming = value(.clipFraming, .smart)
+        engine = value(.engine, .two)
         clipMode = value(.clipMode, .best)
         clipAspect = value(.clipAspect, .portrait)
         clipResolution = value(.clipResolution, 1080)
@@ -291,6 +311,7 @@ public struct Project: Codable, Hashable, Sendable {
         try c.encode(clipCount, forKey: .clipCount)
         try c.encode(clipLengths, forKey: .clipLengths)
         try c.encode(clipFraming, forKey: .clipFraming)
+        try c.encode(engine, forKey: .engine)
         try c.encode(clipMode, forKey: .clipMode)
         try c.encode(clipAspect, forKey: .clipAspect)
         try c.encode(clipResolution, forKey: .clipResolution)

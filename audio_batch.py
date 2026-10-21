@@ -56,7 +56,10 @@ def validate_config(raw):
             raise ValueError('An excerpt output folder contains an input. Choose a different output folder.')
         if destination.exists() and (not destination.is_dir() or (not part['overwrite'] and any(destination.iterdir()))):
             raise ValueError(f'Excerpt output already exists: {destination}. Enable overwrite or choose another folder.')
-        part.update(output_dir=str(destination), output_name=f'{prefix[:100]}_part_{index:03d}')
+        social = (parent_output / 'Social media' / f'part_{index:03d}_{stem}').resolve()
+        if any(p.is_relative_to(social) for p in inputs):
+            raise ValueError('The social media folder contains an input. Choose a different output folder.')
+        part.update(output_dir=str(destination), output_name=f'{prefix[:100]}_part_{index:03d}', clips_dir=str(social))
     return {**first, 'audio': first['audio'], 'output_dir': str(Path(base['output_dir']).expanduser().resolve()),
             'output_name': prefix, 'audio_parts': [dict(path=p['audio'], **{key: p[key] for key in TIMING_KEYS}) for p in checked],
             'part_configs': checked}

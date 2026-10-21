@@ -104,6 +104,8 @@ public struct ClipWindow: Codable, Hashable, Sendable {
     public var start: Double
     public var end: Double
     public var score: Double
+    /// Seconds after the landing downbeat (one beat when the clip ends on the beat, else 0).
+    public var tail: Double = 0
 }
 
 public enum Planner {
@@ -403,10 +405,10 @@ public enum Planner {
     }
 
     public static func windows(music: MusicInfo?, cameras: [Coverage], total: Int, fps: Int, length: Double,
-                               scores: [CameraScores]) -> [ClipWindow] {
+                               scores: [CameraScores], ending: ClipEnding = .beat) -> [ClipWindow] {
         let f = Double(fps), duration = Double(total) / f
         let downbeats = (music?.hasGrid ?? false) ? music!.downbeats : []
-        var spans = [(Double, Double, Bool)]()
+        var spans = [(Double, Double, Bool, Double)]()
         if downbeats.count > 8 {
             let bar = (downbeats.last! - downbeats[0]) / Double(max(1, downbeats.count - 1))
             var bars = max(1, Int((length / bar).rounded()))
@@ -419,16 +421,24 @@ public enum Planner {
                 var k = 0, lo = 0, hi = beats.count
                 while lo < hi { let m = (lo + hi) / 2; if beats[m] < a - 1e-4 { lo = m + 1 } else { hi = m } }
                 k = lo
-                let b = k + 4 * bars < beats.count ? beats[k + 4 * bars] : a + Double(bars) * bar
-                spans.append((a, b, i % 4 == 0))
+                let n = k + 4 * bars
+                let b = n < beats.count ? beats[n] : a + Double(bars) * bar
+                // On the beat: play through the next downbeat and let it ring for one beat,
+                // so the clip finishes on the "one" instead of stopping just before it.
+                var tail = 0.0
+                if ending == .beat {
+                    let next = n + 1 < beats.count ? beats[n + 1] - beats[n] : bar / 4
+                    tail = abs(next - bar / 4) <= 0.3 * bar / 4 ? next : bar / 4
+                }
+                spans.append((a, b + tail, i % 4 == 0, tail))
             }
         } else {
             var t = 0.0
-            while t <= max(0, duration - length) { spans.append((t, t + length, false)); t += 2 }
+            while t <= max(0, duration - length) { spans.append((t, t + length, false, 0)); t += 2 }
         }
         let energy = music?.barEnergy ?? [], barStarts = music?.barStarts ?? [], drops = music?.drops ?? []
         var result = [ClipWindow]()
-        for (a, b, phrase) in spans {
+        for (a, b, phrase, tail) in spans {
             if b > duration + 0.01 { break }
             guard fullyCovered(cameras, Int((a * f).rounded()), Int((b * f).rounded())) else { continue }
             var level = 0.5
@@ -447,7 +457,8 @@ public enum Planner {
                 value += 0.3 * scores.map { $0.activity.mean(a, b) * $0.usable.mean(a, b) }.max()!
             }
             if phrase { value += 0.1 }
-            result.append(ClipWindow(start: (a * 1000).rounded() / 1000, end: (b * 1000).rounded() / 1000, score: (value * 1000).rounded() / 1000))
+            result.append(ClipWindow(start: (a * 1000).rounded() / 1000, end: (b * 1000).rounded() / 1000,
+                                     score: (value * 1000).rounded() / 1000, tail: (tail * 1000).rounded() / 1000))
         }
         return result
     }

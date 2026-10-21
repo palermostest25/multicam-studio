@@ -110,7 +110,7 @@ class PlannerTests(unittest.TestCase):
         info = self.music()
         total = 96 * self.fps
         cams = [Cam('A', 0, 70 * self.fps)]
-        windows = planner.window_scores(info, cams, total, self.fps, 15)
+        windows = planner.window_scores(info, cams, total, self.fps, 15, ending='bar')
         self.assertTrue(windows)
         downbeats = info['downbeats']
         for w in windows:
@@ -122,6 +122,21 @@ class PlannerTests(unittest.TestCase):
         self.assertLessEqual(best[0]['end'], best[1]['start'] + 1e-6)
         sequence = planner.choose_clips(windows, 0, 'sequence')
         self.assertTrue(all(a['end'] <= b['start'] + 1e-6 for a, b in zip(sequence, sequence[1:])))
+
+    def test_clips_end_on_the_beat_or_at_the_bar_line(self):
+        info = self.music()
+        total = 96 * self.fps
+        cams = [Cam('A', 0, total)]
+        beat = planner.window_scores(info, cams, total, self.fps, 15, ending='beat')
+        bar = planner.window_scores(info, cams, total, self.fps, 15, ending='bar')
+        bar_ends = {w['start']: w['end'] for w in bar}
+        self.assertTrue(beat)
+        for w in beat:
+            # One beat past the bar line, so the next downbeat is heard.
+            self.assertAlmostEqual(w['tail'], 60 / 128, delta=0.3 * 60 / 128)
+            if w['start'] in bar_ends:
+                self.assertAlmostEqual(w['end'] - w['tail'], bar_ends[w['start']], delta=1e-3)
+        self.assertTrue(all(w['tail'] == 0 for w in bar))
 
 
 class ClipFramingTests(unittest.TestCase):
@@ -190,7 +205,7 @@ class ClipExportTests(unittest.TestCase):
             self.assertEqual(len(report['clips']), 4)
             self.assertEqual(sorted({c['length'] for c in report['clips']}), [5, 7])
             for clip in report['clips']:
-                self.assertIn(f"_clips/{round(clip['length'])}s/", clip['path'])
+                self.assertIn(f"/Social media/{round(clip['length'])}s/", clip['path'])
                 info = engine.probe(Path(clip['path']))
                 video = next(s for s in info['streams'] if s['codec_type'] == 'video')
                 self.assertEqual((video['width'], video['height']), (720, 1280))
@@ -227,7 +242,11 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(server.validate_config({**base, 'clips': 0, 'clip_lengths': [15, 30]})['clip_lengths'], [])
             self.assertEqual(server.validate_config({**base, 'clips': '15,30'})['clip_lengths'], [15, 30])
             self.assertEqual(command[command.index('--codec') + 1], 'hevc')
-            for bad in ({'aspect': '2:1'}, {'resolution': 999}, {'codec': 'vp9'}, {'clips': 1}, {'clip_framing': 'zoom'}):
+            self.assertEqual(command[command.index('--engine') + 1], '2')
+            engine_one = server.command_for(server.validate_config({**base, 'engine': '1'}), root / 'report.json')
+            self.assertEqual(engine_one[engine_one.index('--engine') + 1], '1')
+            for bad in ({'aspect': '2:1'}, {'resolution': 999}, {'codec': 'vp9'}, {'clips': 1}, {'clip_framing': 'zoom'},
+                        {'engine': 3}, {'engine': 'new'}):
                 with self.assertRaises(ValueError):
                     server.validate_config({**base, **bad})
 

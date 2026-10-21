@@ -92,7 +92,7 @@ final class PlannerTests: XCTestCase {
         let total = 96 * fps
         let cams = [Coverage(angle: "A", first: 0, last: 70 * fps)]
         let scores = Planner.scores(steps: Planner.steps(total: total, fps: fps), vision: [nil])
-        let windows = Planner.windows(music: music, cameras: cams, total: total, fps: fps, length: 15, scores: scores)
+        let windows = Planner.windows(music: music, cameras: cams, total: total, fps: fps, length: 15, scores: scores, ending: .bar)
         XCTAssertFalse(windows.isEmpty)
         for w in windows {
             XCTAssertLessThanOrEqual(w.end, 70 + 1e-6)
@@ -101,6 +101,26 @@ final class PlannerTests: XCTestCase {
         let best = Planner.choose(windows, count: 2, mode: .best)
         XCTAssertEqual(best.count, 2)
         XCTAssertLessThanOrEqual(best[0].end, best[1].start + 1e-6)
+    }
+
+    func testClipsEndOnTheBeatOrAtTheBarLine() {
+        let music = MusicAnalysis.analyse(danceTrack())
+        let total = 96 * fps
+        let cams = [Coverage(angle: "A", first: 0, last: total)]
+        let scores = Planner.scores(steps: Planner.steps(total: total, fps: fps), vision: [nil])
+        let beat = Planner.windows(music: music, cameras: cams, total: total, fps: fps, length: 15, scores: scores, ending: .beat)
+        let bar = Planner.windows(music: music, cameras: cams, total: total, fps: fps, length: 15, scores: scores, ending: .bar)
+        let barEnds = Dictionary(bar.map { ($0.start, $0.end) }, uniquingKeysWith: { a, _ in a })
+        XCTAssertFalse(beat.isEmpty)
+        for w in beat {
+            XCTAssertEqual(w.tail, 60 / 128, accuracy: 0.3 * 60 / 128)
+            if let end = barEnds[w.start] { XCTAssertEqual(w.end - w.tail, end, accuracy: 1e-3) }
+        }
+        XCTAssertTrue(bar.allSatisfy { $0.tail == 0 })
+        XCTAssertEqual(Engine.clipFadeOut(beat[0]), beat[0].tail * 0.6, accuracy: 1e-9)
+        XCTAssertEqual(EngineVersion.one.clipEnding, .bar)
+        XCTAssertEqual(EngineVersion.two.clipEnding, .beat)
+        XCTAssertEqual(try JSONDecoder().decode(Project.self, from: Data("{}".utf8)).engine, .two)
     }
 }
 
@@ -266,7 +286,11 @@ final class EndToEndTests: XCTestCase {
         let outputs = try await engine.render(project: project, analysis: analysis, plan: plan,
                                               folder: URL(fileURLWithPath: project.outputDir)) { _, _ in }
         XCTAssertEqual(outputs.count, 5)
-        XCTAssertTrue(outputs.contains { $0.url.path.contains("_clips/10s/") })
+        XCTAssertTrue(outputs.contains { $0.url.path.contains("/Social media/10s/") })
+        let parts = [AudioPart(path: "/x/set one.wav"), AudioPart(path: "/x/set two.wav")]
+        XCTAssertEqual(Engine.socialFolder(project: project, partIndex: 2, partCount: 2, part: parts[1]).path,
+                       URL(fileURLWithPath: project.outputDir).appendingPathComponent("Social media/part_002_set_two").path)
+        XCTAssertEqual(Engine.outputFolder(project: project, partIndex: 2, partCount: 2, part: parts[1]).lastPathComponent, "part_002_set_two")
         for output in outputs {
             let asset = AVURLAsset(url: output.url)
             let track = try await asset.loadTracks(withMediaType: .video).first!

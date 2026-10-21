@@ -51,6 +51,9 @@ struct EditSettings: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionTitle("Camera switching", "Cuts land on the beat, faster in drops and slower in breakdowns. Angles are chosen from what each camera shows.")
+            Picker("Engine", selection: $state.project.engine) {
+                ForEach(EngineVersion.allCases) { Text($0.title).tag($0) }
+            }
             Picker("Main camera", selection: $state.project.mainCamera) {
                 ForEach(state.project.cameras) { Text("\($0.id) · \($0.label)").tag($0.id) }
             }
@@ -242,7 +245,7 @@ struct ExportSettings: View {
             TextField("File name (optional)", text: $state.project.outputName)
             Toggle("Replace existing files", isOn: $state.project.overwrite)
             if state.parts.count > 1 {
-                Text("Each audio excerpt gets its own numbered folder inside this one.").font(.caption).foregroundStyle(.secondary)
+                Text("Each audio excerpt gets its own numbered folder inside this one. All social clips go in one Social media folder here, with a folder per excerpt and length inside it.").font(.caption).foregroundStyle(.secondary)
             }
 
             Divider()
@@ -258,7 +261,7 @@ struct ExportSettings: View {
             })) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Social clips").font(.headline)
-                    Text("Reels, Shorts and TikTok at several lengths, exported beside the full edit").font(.caption).foregroundStyle(.secondary)
+                    Text("Reels, Shorts and TikTok at several lengths, all in one Social media folder").font(.caption).foregroundStyle(.secondary)
                 }
             }
             if state.project.clips > 0 {
@@ -283,6 +286,10 @@ struct ExportSettings: View {
                     ForEach(ClipFraming.allCases) { Text($0.title).tag($0) }
                 }
                 Text("Cropping wide footage to vertical often cuts the DJ off. Smart keeps the whole picture over a blurred background for wide shots, while the clips keep their quick, on-the-beat cuts.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text(state.project.engine == .two
+                     ? "Lengths are a guide: a 15 s clip is 8 bars, then it lands the next downbeat and lets it ring for a beat (about 15½ s at 128 BPM). Engine 1 stops at the bar line instead."
+                     : "Lengths are a guide: a 15 s clip is 8 bars and stops right at the next bar line (Engine 1). Engine 2 lands the next downbeat.")
                     .font(.caption).foregroundStyle(.secondary)
                 Picker("Choose", selection: $state.project.clipMode) {
                     ForEach(ClipMode.allCases) { Text($0.title).tag($0) }

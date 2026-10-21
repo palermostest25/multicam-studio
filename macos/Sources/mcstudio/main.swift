@@ -101,7 +101,9 @@ func run() async throws {
                 print(String(format: "Rendered %@ in %.1f s (%.1f× real time)", url.lastPathComponent, seconds, (b - a) / seconds))
                 continue
             }
-            let outputs = try await engine.render(project: project, analysis: analysis, plan: plan, folder: folder) { title, fraction in
+            let social = Engine.socialFolder(project: project, partIndex: index + 1, partCount: parts.count, part: part)
+            let outputs = try await engine.render(project: project, analysis: analysis, plan: plan, folder: folder,
+                                                  clipFolder: social) { title, fraction in
                 FileHandle.standardError.write(String(format: "\r%@ %3.0f%%", title, fraction * 100).data(using: .utf8)!)
             }
             print("")
