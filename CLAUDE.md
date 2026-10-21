@@ -141,7 +141,7 @@ python3 -m venv /tmp/mc-venv && /tmp/mc-venv/bin/pip install -q -r requirements.
 
 ## The owner's Arcane deployment (reference; not a file in the repo)
 
-Server address 192.168.1.10 (LAN), also reached as `multicam.denby.dev`. The owner does **not** want a sign-in prompt: no `MULTICAM_PASSWORD`, protection comes from `MULTICAM_ALLOWED_HOSTS`. Shared host: all paths must be named volumes or under `/opt/Docker/appdata/<app>`. Port 4067. The image comes from GHCR, so it must be public or Arcane needs a ghcr.io login.
+Server address 192.168.1.10 (LAN). The owner does **not** want a sign-in prompt: no `MULTICAM_PASSWORD`, protection comes from `MULTICAM_ALLOWED_HOSTS`. Shared host: all paths must be named volumes or under `/opt/Docker/appdata/<app>`. Port 4067. The image comes from GHCR, so it must be public or Arcane needs a ghcr.io login.
 
 ```yaml
 services:
@@ -155,7 +155,7 @@ services:
       - "4067:8765"
     environment:
       # No sign-in: only requests addressed to this host are accepted.
-      MULTICAM_ALLOWED_HOSTS: "192.168.1.10,multicam.denby.dev"
+      MULTICAM_ALLOWED_HOSTS: "192.168.1.10"
       # MULTICAM_PASSWORD: "..."   # add only if exposed beyond the home network
     volumes:
       - /opt/Docker/appdata/multicam-studio/recordings:/media/recordings
