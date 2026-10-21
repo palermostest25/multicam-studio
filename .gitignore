@@ -21,3 +21,5 @@ releases/
 /recordings/
 /exports/
 .multicam-demo/
+macos/.build/
+macos/.swiftpm/

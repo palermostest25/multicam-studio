@@ -165,12 +165,20 @@ def svg(path, at, out_w, out_h, view, fit):
             f'preserveAspectRatio="{"xMidYMid meet" if fit else "none"}">{scene(path, at, w, h)}</svg></svg>')
 
 
-def framed_view(path, framing, mode):
-    """Mirror multicam_edit.framing_filter: fit, or a fixed aspect crop with zoom."""
+def frame_size(aspect, resolution):
+    """Mirror multicam_edit.frame_size."""
+    w, h = {'16:9': (16, 9), '9:16': (9, 16), '1:1': (1, 1), '4:5': (4, 5)}.get(aspect, (16, 9))
+    if w >= h:
+        return int(round(resolution*w/h/2)*2), int(resolution)
+    return int(resolution), int(round(resolution*h/w/2)*2)
+
+
+def framed_view(path, framing, mode, size=None):
+    """Mirror multicam_edit.framing_filter: fit/pad the whole picture, or a fixed aspect crop with zoom."""
     info = media_info(path)
     iw, ih = info['width'], info['height']
-    ow, oh = (2160, 3840) if mode == 'vertical' else (3840, 2160)
-    if framing['mode'] == 'fit':
+    ow, oh = size or ((2160, 3840) if mode == 'vertical' else (3840, 2160))
+    if framing.get('mode', 'fit') in ('fit', 'pad'):
         return (0, 0, iw, ih), True
     cw = min(iw, ih*ow/oh)/framing['zoom']
     ch = cw*oh/ow
@@ -334,13 +342,14 @@ def build_report(config, job_dir):
                      'source_out_seconds': source_in+s['end']-s['start'], 'reason': s['reason']})
         seconds[s['camera']] = seconds.get(s['camera'], 0)+s['end']-s['start']
     shares = {c['id']: seconds.get(c['id'], 0)/duration for c in cameras}
-    width, height = (2160, 3840) if config['mode'] == 'vertical' else (3840, 2160)
+    width, height = frame_size(config.get('aspect') or ('9:16' if config['mode'] == 'vertical' else '16:9'),
+                               config.get('resolution') or 2160)
     suffix = '_vertical' if config['mode'] == 'vertical' else ''
     name = config['output_name'] or f'multicam_cut{suffix}'
     previews = []
     for camera in cameras:
         for index, clip in enumerate(camera['clips']):
-            view, fit = framed_view(clip['path'], clip.get('framing') or {'mode': 'fit'}, config['mode'])
+            view, fit = framed_view(clip['path'], clip.get('framing') or {'mode': 'fit'}, config['mode'], (width, height))
             pw, ph = (540, 960) if config['mode'] == 'vertical' else (960, 540)
             target = job_dir/f'{camera["id"]}_{index+1}_{Path(clip["path"]).stem}{suffix}_crop_preview.svg'
             target.write_text(svg(clip['path'], 3, pw, ph, view, fit), encoding='utf-8')
@@ -359,9 +368,36 @@ def build_report(config, job_dir):
         'stats': {'a_share': shares.get('A', 0), 'b_share': shares.get('B', 0), 'main_share': shares.get(main, 0),
                   'camera_shares': shares, 'average_cut_seconds': duration/max(1, len(rows)),
                   'black_seconds': 0.0, 'shot_count': len(rows), 'cut_count': max(0, len(rows)-1)},
+        'format': {'aspect': config.get('aspect', '16:9'), 'resolution': config.get('resolution', 2160),
+                   'codec': config.get('codec', 'h264'), 'width': width, 'height': height, 'fps': config['fps']},
+        'music': {'bpm': 124.0, 'confidence': 0.9, 'drops': [a for a, _ in config['drops']], 'sections': []},
+        'planner': config.get('planner', 'smart'),
+        'clips': demo_clips(config, rows, duration, name),
         'outputs': {'video': None, 'planned_video': str(Path(config['output_dir'])/f'{name}.mp4'),
                     'cut_list': str(cut_list), 'report': str(job_dir/'report.json'), 'previews': previews},
     }
+
+
+def demo_clips(config, rows, duration, name):
+    """Evenly spaced, whole-bar (124 BPM) social clips, as the smart planner reports them."""
+    length = float(config.get('clips') or 0)
+    if not length:
+        return []
+    bar = 4*60/124
+    length = max(1, round(length/bar))*bar
+    count = int(config.get('clip_count') or 0) or max(1, int(duration//length))
+    count = min(count, max(1, int(duration//length)))
+    gap = (duration-count*length)/(count+1)
+    clips = []
+    for index in range(count):
+        start = round(gap+index*(length+gap), 3)
+        end = round(start+length, 3)
+        shots = [{**r, 'start_seconds': max(r['start_seconds'], start)-start, 'end_seconds': min(r['end_seconds'], end)-start}
+                 for r in rows if r['end_seconds'] > start and r['start_seconds'] < end]
+        clips.append({'index': index+1, 'start': start, 'end': end, 'score': 1.0, 'duration': round(length, 3),
+                      'path': str(Path(config['output_dir'])/f'{name}_clips'/f'{name}_{index+1:03d}.mp4'),
+                      'rendered': False, 'shots': shots})
+    return clips
 
 
 # ---------------------------------------------------------------- server overrides
@@ -491,6 +527,7 @@ class DemoHandler(server.Handler):
         result = waveform_data(audio)
         result['energetic'] = plan_clips(result['peaks'], result['duration'], data.get('target_seconds', 30), result['maximum'])
         result['target_seconds'] = float(data.get('target_seconds', 30))
+        result['music'] = {'bpm': 124.0, 'confidence': 0.9, 'drops': [], 'sections': [], 'downbeats': []}
         result['audio_url'] = self.studio.register(audio, 'audio')['url']
         return self.json_response(200, result)
 

@@ -48,12 +48,12 @@ else:
     import fcntl
 
 APP = Path(__file__).resolve().parent
-VERSION = '1.2.0'
+VERSION = '2.0.0'
 APP_ID = 'com.multicamstudio.desktop'
 DISCONNECTS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)
 _RUNNING_SERVER = None
 VIDEO_EXTS = {'.mp4', '.mov'}
-AUDIO_EXTS = {'.wav'}
+AUDIO_EXTS = {'.wav','.aif','.aiff','.flac','.mp3','.m4a'}
 PRESETS = {'ultrafast','superfast','veryfast','faster','fast','medium','slow'}
 LOOPBACK = {'127.0.0.1','localhost'}
 # Workers print file names; keep their pipes UTF-8 whatever the Windows code page.
@@ -128,11 +128,13 @@ def finite(value, label, low=None, high=None, integer=False):
 def validate_framing(value):
     if not isinstance(value,dict):raise ValueError('Invalid clip framing.')
     mode=value.get('mode','fit')
-    if mode not in ('fit','crop'):raise ValueError('Framing must fit the full picture or crop it.')
+    if mode not in ('fit','crop','pad'):raise ValueError('Framing must crop, fit (blurred fill) or pad the picture.')
     centre=value.get('center',[.5,.5])
     if not isinstance(centre,list) or len(centre)!=2:raise ValueError('Crop centre needs X and Y.')
+    auto=value.get('auto',False)
+    if not isinstance(auto,bool):raise ValueError('Automatic framing must be on or off.')
     return {'mode':mode,'center':[finite(x,'Crop centre',0,1) for x in centre],
-            'zoom':finite(value.get('zoom',1),'Crop zoom',1,8)}
+            'zoom':finite(value.get('zoom',1),'Crop zoom',1,8),'auto':auto}
 
 
 def validate_config(raw):
@@ -201,22 +203,40 @@ def validate_config(raw):
         raise ValueError('The same recording is selected more than once.')
     audio = resolved(c.get('audio'))
     if not audio.is_file() or audio.suffix.lower() not in AUDIO_EXTS:
-        raise ValueError('Choose a WAV audio bounce.')
+        raise ValueError('Choose the set audio (WAV, AIFF, FLAC, MP3 or M4A).')
     c['audio'] = str(audio)
     out = resolved(c.get('output_dir'))
     if out.exists() and not out.is_dir():
         raise ValueError('The output location must be a folder.')
     c['output_dir'] = str(out)
     name = str(c.get('output_name') or '').strip()
-    if name.lower().endswith('.mp4'):
+    if name.lower().endswith(('.mp4','.mov')):
         name = name[:-4]
     if name and (not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9 ._-]{0,119}',name) or name.endswith((' ','.'))):
         raise ValueError('Output name must start with a letter or number and use only letters, numbers, spaces, dots, underscores or hyphens (up to 120 characters).')
     c['output_name'] = name
-    for key, choices, default in [('mode',{'horizontal','vertical'},'horizontal'),('preset',PRESETS,'medium')]:
+    aspects={'16:9','9:16','1:1','4:5'}
+    if not c.get('aspect'):c['aspect']='9:16' if c.get('mode')=='vertical' else '16:9'
+    for key, choices, default in [('mode',{'horizontal','vertical'},'horizontal'),('preset',PRESETS,'veryfast'),
+                                  ('aspect',aspects,'16:9'),('codec',{'h264','hevc','prores'},'h264'),
+                                  ('container',{'mp4','mov'},'mp4'),('encoder',{'auto','hardware','software'},'auto'),
+                                  ('planner',{'smart','classic'},'smart'),('vision',{'auto','on','off'},'auto'),
+                                  ('clip_mode',{'best','sequence'},'best'),('clip_aspect',aspects,'9:16')]:
         c[key] = c.get(key,default)
         if c[key] not in choices:
             raise ValueError(f'Invalid {key.replace("_"," ")}.')
+    c['mode']='vertical' if c['aspect'] in ('9:16','4:5') else 'horizontal'
+    for key,default in [('resolution',1080),('clip_resolution',1080)]:
+        c[key]=finite(c.get(key,default),key,720,2160,True)
+        if c[key] not in (720,1080,1440,2160):raise ValueError('Choose 720p, 1080p, 1440p or 4K.')
+    c['clips']=finite(c.get('clips') or 0,'Clip length',0,600)
+    if 0<c['clips']<3:raise ValueError('Short clips must be at least 3 seconds long.')
+    c['clip_count']=finite(c.get('clip_count',5),'Clip count',0,500,True)
+    c['clip_fade']=finite(c.get('clip_fade',0),'Clip fade',0,5)
+    c['jobs']=finite(c.get('jobs',0),'Parallel shots',0,16,True)
+    c['clips_only']=c.get('clips_only',False)
+    if not isinstance(c['clips_only'],bool):raise ValueError('clips_only must be on or off.')
+    if c['clips_only'] and not c['clips']:raise ValueError('Choose a clip length to export clips only.')
     for key,default,lo,hi,integer in [('seed',42,-2147483648,2147483647,True),('fps',30,1,60,True),('crf',18,0,51,True),('cut_scale',1,0.05,20,False),('main_share',.7,.05,.95,False)]:
         c[key] = finite(c.get(key,default),key,lo,hi,integer)
     if c['fps'] not in (24,25,30,50,60):
@@ -280,7 +300,7 @@ def worker_command(kind):
     """Use explicit entrypoint dispatch in a frozen app; Python scripts in source installs."""
     if getattr(sys, 'frozen', False):
         return [sys.executable, '--' + kind]
-    return [sys.executable, '-u', str(APP / ('multicam_edit.py' if kind == 'engine' else 'effects.py'))]
+    return [sys.executable, '-u', str(APP / {'engine':'multicam_edit.py','effects':'effects.py','audio-batch':'audio_batch.py'}[kind])]
 
 
 def writable_folder(path):
@@ -307,8 +327,14 @@ def command_for(c, report):
         if c.get('shot_overrides'):
             raise ValueError('Shot overrides require a camera project.')
     cmd += ['--audio',c['audio'],'--output-dir',c['output_dir'],'--report-json',str(report)]
-    for key in ('mode','main_camera','main_share','seed','fps','cut_scale','crf','preset'):
-        cmd += ['--'+key.replace('_','-'),str(c[key])]
+    for key in ('mode','main_camera','main_share','seed','fps','cut_scale','crf','preset','aspect','resolution',
+                'codec','container','encoder','planner','vision','jobs'):
+        if key in c:cmd += ['--'+key.replace('_','-'),str(c[key])]
+    if c.get('clips'):
+        cmd += ['--clips',str(c['clips']),'--clip-count',str(c['clip_count']),'--clip-mode',c['clip_mode'],
+                '--clip-aspect',c['clip_aspect'],'--clip-resolution',str(c['clip_resolution']),'--clip-fade',str(c['clip_fade'])]
+        if c.get('clips_only'):cmd.append('--clips-only')
+    if c.get('cache_dir'):cmd += ['--cache-dir',c['cache_dir']]
     for key in ('a_center','b_center','main_hold','cutaway_hold','drop_hold','breakdown_hold'):
         cmd += ['--'+key.replace('_','-')]+list(map(str,c[key]))
     if c['output_name']: cmd += ['--output-name',c['output_name']]
@@ -379,6 +405,20 @@ class Studio:
             try: report=json.loads(report_path.read_text(encoding='utf-8'))
             except (OSError,ValueError): report=None
             data['report']=report;artifacts=[]
+            if report and report.get('type')=='audio_batch':
+                for part in report.get('parts',[]):
+                    part['artifacts']=[]
+                    detail=part.get('report')
+                    if not detail:continue
+                    for key,kind in [('video','video'),('cut_list','cut_list'),('report','report')]:
+                        target=detail.get('outputs',{}).get(key)
+                        item=self.register(target,kind) if target else None
+                        if item:part['artifacts'].append(item)
+                    for preview in detail.get('outputs',{}).get('previews',[]):
+                        item=self.register(preview['path'],'image')
+                        if item:
+                            item.update(angle=preview.get('angle'),source_path=preview.get('source_path'))
+                            part['artifacts'].append(item)
             if report:
                 outputs=report.get('outputs',{})
                 for key,kind in [('video','video'),('cut_list','cut_list'),('report','report')]:
@@ -401,9 +441,19 @@ class Studio:
             return data
 
     def start(self,raw,kind='edit'):
+        if not isinstance(raw,dict):raise ValueError('Expected job settings.')
         if not all(self.dependencies().values()):
             raise ValueError('The rendering tools are unavailable. Open Settings to check this installation.')
-        if kind=='edit':config=validate_config(raw)
+        if kind=='edit':
+            raw={**raw,'cache_dir':str(self.state/'cache')}
+            if self.remote:
+                # Server mode: exports always land inside the exports volume, in an
+                # optional subfolder the user names (created on demand).
+                raw['output_dir']=str(self.export_subfolder(raw.get('output_subfolder')))
+            if isinstance(raw.get('audio_parts'),list) and len(raw['audio_parts'])>1:
+                import audio_batch
+                config=audio_batch.validate_config(raw)
+            else:config=validate_config(raw)
         else:
             import effects
             config=effects.validate_batch(raw) if kind=='highlights' else effects.validate_config(raw)
@@ -428,7 +478,10 @@ class Studio:
                 if job['cancel_requested']:
                     job.update(status='cancelled',stage='Cancelled');return
                 if job.get('kind','edit')=='edit':
-                    cmd=command_for(job['config'],directory/'report.json')
+                    if job['config'].get('part_configs'):
+                        config_path=directory/'audio_batch.json';config_path.write_text(json.dumps(job['config'],indent=2),encoding='utf-8')
+                        cmd=worker_command('audio-batch')+['--config',str(config_path),'--report-json',str(directory/'report.json')]
+                    else:cmd=command_for(job['config'],directory/'report.json')
                 else:
                     config_path=directory/'effects.json';config_path.write_text(json.dumps(job['config'],indent=2),encoding='utf-8')
                     cmd=worker_command('effects')+['--config',str(config_path),'--report-json',str(directory/'report.json')]
@@ -441,14 +494,29 @@ class Studio:
                     line=line.rstrip();log.write(line+'\n');log.flush()
                     with self.lock:
                         job['logs'].append(line);job['logs']=job['logs'][-1500:]
+                        excerpt=re.match(r'Audio excerpt (\d+)/(\d+):',line)
+                        if excerpt:
+                            job['excerpt_index'],job['excerpt_total']=map(int,excerpt.groups())
+                            job.update(stage=line,progress=(job['excerpt_index']-1)/job['excerpt_total']*95)
+                        deliverable=re.match(r'Deliverable (\d+)/(\d+) weight=([0-9.]+) done=([0-9.]+) total=([0-9.]+): (.*)',line)
+                        if deliverable:
+                            job['deliverable']={'index':int(deliverable.group(1)),'count':int(deliverable.group(2)),
+                                                'weight':float(deliverable.group(3)),'done':float(deliverable.group(4)),
+                                                'total':max(float(deliverable.group(5)),1e-6),'title':deliverable.group(6)}
                         match=re.search(r'Rendering (\d+)/(\d+):',line)
                         if match:
                             n,total=map(int,match.groups())
-                            job.update(stage=f'Rendering shot {n} of {total}',progress=round((n-1)/total*95,1))
+                            part=job.get('excerpt_index',1);parts=job.get('excerpt_total',1)
+                            d=job.get('deliverable')
+                            fraction=(d['done']+n/total*d['weight'])/d['total'] if d else (n-1)/total
+                            title=(d['title'][:1].upper()+d['title'][1:]+' · ') if d and d['count']>1 else ''
+                            job.update(stage=(f'Excerpt {part}/{parts} · ' if parts>1 else '')+f'{title}Rendering shot {n} of {total}',progress=round(((part-1)+fraction)/parts*95,1))
+                        elif line.startswith(('Analysing the music','Scoring camera pictures')):
+                            job.update(stage=line.rstrip(' …'))
                         elif line.startswith('Batch clip '):
                             job.update(stage=line,progress=job.get('progress'))
                         elif 'Concatenating' in line:
-                            job.update(stage='Assembling video and audio',progress=97)
+                            job.update(stage='Assembling video and audio',progress=(job.get('excerpt_index',1)-.03)/job.get('excerpt_total',1)*100)
                         elif line.startswith('duration_seconds='):
                             try:job['render_duration']=float(line.split('=',1)[1])
                             except ValueError:pass
@@ -536,23 +604,41 @@ class Studio:
     def library_folders(self):
         return {'recordings':self.default_folder,'exports':self.default_output}
 
+    def export_subfolder(self,name):
+        """A folder inside the exports folder, from a user-typed name such as 'Reels/Friday'."""
+        name=str(name or '').strip().replace('\\','/')
+        parts=[p.strip() for p in name.split('/') if p.strip()]
+        if len(parts)>3 or any(p in ('.','..') or p.startswith('.') or len(p)>80 or '\x00' in p for p in parts):
+            raise ValueError('Use a simple folder name inside Exports, such as "Reels" or "Friday/Reels".')
+        folder=self.default_output.joinpath(*parts) if parts else self.default_output
+        folder.mkdir(parents=True,exist_ok=True)
+        return folder
+
     def library(self):
-        """Top-level files in the recordings and exports folders, for server mode."""
+        """Files in the recordings and exports folders (three levels deep), for server mode."""
         result={}
         for key,folder in self.library_folders().items():
             items=[]
-            try:entries=list(folder.iterdir()) if folder.is_dir() else []
-            except OSError:entries=[]
+            entries=[]
+            def walk(directory,depth):
+                try:children=list(directory.iterdir())
+                except OSError:return
+                for child in children:
+                    if child.name.startswith('.') or child.name.endswith('.uploading'):continue
+                    try:
+                        if child.is_dir() and not child.is_symlink():
+                            if depth<3:walk(child,depth+1)
+                        elif child.is_file():entries.append(child)
+                    except OSError:continue
+            if folder.is_dir():walk(folder,1)
             for item in entries:
-                if item.name.startswith('.') or item.name.endswith('.uploading'):continue
-                try:
-                    if not item.is_file():continue
-                    info=item.stat()
+                try:info=item.stat()
                 except OSError:continue
                 suffix=item.suffix.lower()
                 kind='video' if suffix in VIDEO_EXTS else 'audio' if suffix in AUDIO_EXTS else 'image' if suffix in ('.jpg','.png') else 'other'
                 entry=self.register(item,kind) or {}
-                items.append({**entry,'name':item.name,'path':str(item),'size':info.st_size,
+                relative=str(item.relative_to(folder)).replace(os.sep,'/')
+                items.append({**entry,'name':relative,'path':str(item),'size':info.st_size,
                               'modified':dt.datetime.fromtimestamp(info.st_mtime).isoformat(timespec='seconds'),'kind':kind})
             items.sort(key=lambda x:x['modified'],reverse=True)
             result[key]=items
@@ -563,7 +649,9 @@ class Studio:
     def delete_library_file(self,value):
         path=resolved(value)
         folders={f.expanduser().resolve() for f in self.library_folders().values()}
-        if path.parent not in folders or path.name.startswith('.') or not path.is_file():
+        inside=next((f for f in folders if path.is_relative_to(f)),None)
+        if (inside is None or len(path.relative_to(inside).parts)>3
+                or any(p.startswith('.') for p in path.relative_to(inside).parts) or not path.is_file()):
             raise ValueError('Only files in the recordings or exports folder can be deleted.')
         with self.lock:
             if self.active and self.jobs[self.active]['status'] in ('queued','running'):
@@ -901,7 +989,7 @@ class Handler(BaseHTTPRequestHandler):
         path=resolved(data.get('path'))
         if not path.is_file() or path.suffix.lower() not in VIDEO_EXTS|AUDIO_EXTS:raise ValueError('Choose a WAV bounce or rendered video.')
         folder=self.studio.state/'waveforms';folder.mkdir(exist_ok=True)
-        stat=path.stat();key=hashlib.sha256(f'v4:{path}:{stat.st_size}:{stat.st_mtime_ns}'.encode()).hexdigest()
+        stat=path.stat();key=hashlib.sha256(f'v5:{path}:{stat.st_size}:{stat.st_mtime_ns}'.encode()).hexdigest()
         cached=folder/(key+'.json')
         if cached.exists():result=json.loads(cached.read_text(encoding='utf-8'))
         else:
@@ -924,6 +1012,12 @@ class Handler(BaseHTTPRequestHandler):
                 maximum=float(np.max(values))
                 peaks=(values/max(maximum,1e-9)).clip(0,1)
                 result={'duration':duration,'sample_rate':8000,'peaks':[round(float(x),5) for x in peaks],'maximum':maximum}
+                try:
+                    import music
+                    info=music.analyse(np.asarray(samples),duration)
+                    result['music']={k:info.get(k) for k in ('bpm','confidence','drops','sections','downbeats')}
+                except Exception as exc:  # beat analysis is optional decoration
+                    result['music']={'error':str(exc)}
                 temporary=cached.with_name(key+'-'+secrets.token_hex(4)+'.tmp');temporary.write_text(json.dumps(result),encoding='utf-8');temporary.replace(cached)
             finally:
                 # Windows cannot delete a file that is still memory-mapped.

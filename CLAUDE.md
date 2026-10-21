@@ -10,6 +10,7 @@ Read this whole file before doing anything in this repository.
   1. Windows support (running from source)
   2. Docker / server mode (for Arcane)
   3. The stdlib-only UI demo on the `ui-demo` branch
+  4. **2.0 (ours):** the native Swift macOS app in `macos/`, and the smart engine in the Python version (`music.py`, `vision.py`, `planner.py`, output formats, social clips, export subfolders). Since 2.0 our `multicam_edit.py` render/plan code has diverged a lot from upstream. On a merge, keep ours and port upstream's new behaviour into it (and into the Swift engine if it affects editing).
 
 ## Standing permissions and preferences (from the owner)
 
@@ -92,6 +93,20 @@ git merge --no-ff upstream/main            # merge commit, never rebase
 - `Start Multicam Studio.bat`: the Windows launcher (venv plus pip on first run, then `server.py --open`). It uses CRLF line endings and `goto` labels rather than parenthesised blocks.
 - README sections "Run on Windows" and "Run in Docker (Arcane, Portainer, Compose)". Keep them when upstream edits the README.
 
+### 2.0 smart engine (Python) — ours
+- `music.py` (beats, bars, sections), `vision.py` (keyframe picture scores, auto-framing focus) and `planner.py` (smart planner, short-clip windows) are imported by `multicam_edit.py`. `--planner classic` keeps upstream's `make_plan`/`plan_once` working (upstream's tests call them).
+- Tests patch `engine.output_size` to shrink renders, so sizes go through `output_size(frame_size(...))`. Keep it that way.
+- `fit` framing = whole picture over a blurred fill (`fit_filter`), `pad` = black bars, `crop` with optional `auto` (vision focus). The boxblur radius must stay <= a quarter of the small background size.
+- Rendering: shots render in parallel (`--jobs`), with `fps=` before crop/scale, VideoToolbox encode/decode only on macOS (`--encoder auto`). Progress lines: `Deliverable i/n weight= done= total=: title`, then `Rendering n/N:` (server.py parses both).
+- Server: `Studio.start` overwrites `cache_dir` (state/cache) and, in server mode, `output_dir` = `export_subfolder(output_subfolder)` inside `default_output`; never trust a client path there. The library lists 3 levels deep and delete accepts nested files inside the two folders only.
+- **Parity rule:** `music.py` ↔ `macos/Sources/MulticamCore/MusicAnalysis.swift`, `vision.py` ↔ `VisionAnalysis.swift`, `planner.py` ↔ `Planner.swift`, and sync (`multicam_edit.synchronise`) ↔ `Sync.swift`. Change both sides together. Python tests: `tests/test_smart.py`; Swift: `cd macos && swift test`. The Swift audio decoder resamples with AVAudioConverter (`primeMethod = .normal`); AVAssetReader's own resampler adds a rate-dependent delay that skews sync by 20–30 ms.
+
+### Native macOS app (`macos/`) — ours
+- Swift package: `MulticamCore` (engine), `MulticamStudio` (SwiftUI app), `mcstudio` (CLI), tests. `macos/build-app.sh` makes the universal app + DMG (`SIGN_IDENTITY`, `ARCHS`, `SCRATCH`, `DIST` env vars). Build scratch should live on the internal disk.
+- It reads/writes the same project JSON as the web UI (`Project` in `Models.swift` maps the snake_case keys; keep new web keys in step).
+- This is the Mac release. `desktop.py` and `packaging/` (the 1.x PyInstaller app) stay as upstream has them, but README/releases point to the native app. GitHub releases: `v2.x.y` tags with `Multicam-Studio-<version>-macOS.dmg`.
+- Local test builds signed with the owner's Apple Development identity keep the macOS "removable volume" permission between builds; ad-hoc builds ask again each time.
+
 ### New requirements from upstream
 If upstream adds a Python dependency, it goes in `requirements.txt` (the Docker image installs from it). Check that it installs on `python:3.12-slim` without extra system packages; if it needs any, add `apt-get` lines to the Dockerfile.
 
@@ -107,7 +122,7 @@ If upstream adds a Python dependency, it goes in `requirements.txt` (the Docker 
 ## Testing (every sync)
 
 ```sh
-python3 -m py_compile server.py multicam_edit.py effects.py highlights.py
+python3 -m py_compile *.py
 node -e "new Function(require('fs').readFileSync('web/app.js','utf8'))"
 python3 -m venv /tmp/mc-venv && /tmp/mc-venv/bin/pip install -q -r requirements.txt
 /tmp/mc-venv/bin/python -m unittest discover -s tests -v      # upstream's tests
@@ -157,12 +172,13 @@ Host setup: `sudo mkdir -p /opt/Docker/appdata/multicam-studio/{recordings,expor
 3. Merged upstream 1.2.0 (batch energetic highlights, new `highlights.py`). The conflicts were in `server.py` (waveform endpoint) and `app.js` (draft strings). The Dockerfile switched to `COPY *.py`, and the demo got a pure-Python `plan_clips`.
 4. Added this file.
 5. Server-mode file workflow: uploads land in recordings, a Files tab for download/delete, no server paths in the UI. Removed `.env` usage, and the compose has no sign-in (restricted to 192.168.1.10).
+6. 2.0 (2026-10-21): merged upstream 1.3.0; added the native Swift app, smart planner (beats, sections, picture scores), output formats/codecs, social clips, blurred fit, auto framing, export subfolders in server mode, faster rendering. Verified on the owner's real 3-camera 26-09-26 set (sync matches 1.x offsets exactly).
 
 ## App overview (unchanged from upstream)
 
 - `server.py`: stdlib HTTP server plus a job runner. It serves `web/`, and starts `multicam_edit.py` (edit engine) and `effects.py` (clip, effects and batch highlight exports) as subprocesses.
 - `multicam_edit.py`: syncs cameras to the WAV bounce (NumPy/SciPy correlation, drift), builds the seeded shot plan and renders with FFmpeg/libx264.
 - `highlights.py`: energetic clip planner (NumPy/SciPy).
-- `desktop.py` and `packaging/`: the macOS app bundle (PyInstaller, signing). macOS-only; leave it as upstream has it.
+- `desktop.py` and `packaging/`: the 1.x macOS app bundle (PyInstaller, signing). macOS-only; leave it as upstream has it. The 2.0 Mac release is the native app in `macos/`.
 - `docs/USER_GUIDE.md` and `CHANGELOG.md`: upstream-maintained.
 - Run from source: `python server.py --open` (needs Python 3.10+, numpy, scipy, ffmpeg and ffprobe on PATH).
