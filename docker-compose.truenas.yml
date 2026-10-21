@@ -1,0 +1,37 @@
+# Multicam Studio on TrueNAS SCALE (24.10 or newer): Apps → Discover Apps → ⋮ → Install via YAML.
+# Open http://<truenas-ip>:4067. Every value is written here directly: no .env file.
+#
+# Before installing:
+#   1. Create datasets (replace "tank" with your pool name):
+#        tank/apps/multicam-studio/recordings, .../exports, .../state
+#      and give them to the "apps" user (568) in Datasets → Edit Permissions.
+#   2. NVIDIA GPU (for example a T1000): Apps → Configuration → Settings →
+#      tick "Install NVIDIA Drivers" and save. Without a GPU, delete the
+#      "deploy:" block below; the studio then encodes in software.
+services:
+  multicam-studio:
+    image: ghcr.io/palermostest25/multicam-studio:latest
+    container_name: multicam-studio
+    init: true                # reaps FFmpeg processes when a render is cancelled
+    restart: unless-stopped
+    user: "568:568"           # TrueNAS "apps" user; owner of the exported files
+    ports:
+      - "4067:8765"
+    environment:
+      # No sign-in: only requests addressed to this host are accepted.
+      # Use your TrueNAS IP (and any host name you open it with, comma-separated).
+      MULTICAM_ALLOWED_HOSTS: "192.168.1.10"
+      # MULTICAM_PASSWORD: "..."   # add only if exposed beyond the home network
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,video,utility"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - /mnt/tank/apps/multicam-studio/recordings:/media/recordings
+      - /mnt/tank/apps/multicam-studio/exports:/media/exports
+      - /mnt/tank/apps/multicam-studio/state:/state
