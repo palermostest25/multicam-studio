@@ -15,6 +15,7 @@ public struct MediaInfo: Sendable, Hashable {
     public var videoStart: Double          // first video sample time
     public var audioStart: Double
     public var isHDR: Bool
+    public var creationDate: Date? = nil   // when recording started (camera clock)
 
     public var aspect: Double { orientedSize.height > 0 ? orientedSize.width / orientedSize.height : 16.0 / 9 }
 }
@@ -47,6 +48,9 @@ public enum Media {
             let range = try await audio.load(.timeRange)
             info.audioStart = range.start.seconds
             if video == nil { info.duration = range.duration.seconds }
+        }
+        if let item = try? await asset.load(.creationDate), let date = try? await item.load(.dateValue) {
+            info.creationDate = date
         }
         if !info.duration.isFinite || info.duration <= 0 {
             info.duration = try await asset.load(.duration).seconds

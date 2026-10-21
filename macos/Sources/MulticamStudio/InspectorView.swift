@@ -147,6 +147,16 @@ struct SyncRow: View {
             HStack {
                 if let synced, manual == nil {
                     Text(String(format: "Auto: %+.3f s", synced.sync.offset)).font(.caption).foregroundStyle(.secondary)
+                } else if let excluded = state.currentAnalysis?.excluded.first(where: { $0.path == clip.path }), manual == nil {
+                    if excluded.noFootage {
+                        Text("Not recording during this audio").font(.caption).foregroundStyle(.secondary)
+                    } else if let suggested = excluded.suggestedOffset {
+                        Button(String(format: "Use clock estimate %+.1f s", suggested)) {
+                            state.setManualOffset(suggested, for: clip.path)
+                        }
+                        .controlSize(.small)
+                        .help("From the recording timestamps (about ±1 s). Check the preview and fine-tune.")
+                    }
                 }
                 Spacer()
                 Toggle("Manual", isOn: Binding(get: { manual != nil }, set: { on in

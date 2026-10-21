@@ -133,9 +133,11 @@ struct ClipRow: View {
     var body: some View {
         let info = state.mediaInfo[clip.path]
         let synced = state.currentAnalysis?.clips.first { $0.url.path == clip.path }
-        let failed = state.currentAnalysis != nil && synced == nil
+        let excluded = state.currentAnalysis?.excluded.first { $0.path == clip.path }
+        let idle = excluded?.noFootage ?? false
+        let failed = state.currentAnalysis != nil && synced == nil && !idle
         HStack(spacing: 8) {
-            Image(systemName: synced != nil ? "checkmark.circle.fill" : failed ? "exclamationmark.triangle.fill" : "film")
+            Image(systemName: synced != nil ? "checkmark.circle.fill" : idle ? "moon.zzz" : failed ? "exclamationmark.triangle.fill" : "film")
                 .foregroundStyle(synced != nil ? .green : failed ? .orange : .secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(clip.url.lastPathComponent).lineLimit(1).truncationMode(.middle)
@@ -144,8 +146,14 @@ struct ClipRow: View {
                         Text((synced.sync.offset >= 0 ? "starts \(Timecode.short(synced.sync.offset)) into the audio"
                               : "started \(Timecode.short(-synced.sync.offset)) before the audio")
                              + (synced.sync.method == "manual" ? " · manual" : ""))
+                    } else if idle {
+                        Text("not recording during this audio")
                     } else if failed {
-                        Text("not synced to this audio")
+                        if let suggested = excluded?.suggestedOffset {
+                            Text("couldn't sync · clock says ≈\(String(format: "%+.0f", suggested)) s")
+                        } else {
+                            Text("couldn't sync to this audio")
+                        }
                     } else if let info {
                         Text("\(Timecode.short(info.duration)) · \(Int(info.orientedSize.width))×\(Int(info.orientedSize.height))\(info.isHDR ? " HDR" : "")")
                     } else if !FileManager.default.fileExists(atPath: clip.path) {
