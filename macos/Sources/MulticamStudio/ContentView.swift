@@ -113,7 +113,8 @@ struct WelcomeView: View {
                 }
             }
             .controlSize(.large)
-            .buttonStyle(.borderedProminent)
+            .glassButton(prominent: true)
+            .glassGroup(spacing: 12)
             Text("Or drag files anywhere into this window. Each video becomes its own camera; add more parts to a camera from the sidebar.")
                 .font(.callout)
                 .foregroundStyle(.tertiary)
@@ -130,7 +131,24 @@ struct WelcomeView: View {
 struct StatusBar: View {
     @EnvironmentObject var state: AppState
     @Binding var showLog: Bool
+    @AppStorage(Appearance.key) private var glass = true
     var body: some View {
+        if glass {
+            content
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .glassCapsule()
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+        } else {
+            content
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(.bar)
+        }
+    }
+
+    var content: some View {
         HStack(spacing: 10) {
             if state.busy {
                 if let progress = state.progress {
@@ -155,9 +173,6 @@ struct StatusBar: View {
             .help("Activity log")
         }
         .font(.callout)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(.bar)
     }
 }
 

@@ -216,22 +216,43 @@ struct EditTimeline: View {
                     selection = nil
                 }
                 .tint(CameraColor.color(for: id, in: ids))
-                .buttonStyle(.borderedProminent)
+                .glassButton(prominent: true)
                 .controlSize(.small)
             }
             Divider().frame(height: 14)
-            Button("Mark drop") { state.addMarker(start: range.lowerBound, end: range.upperBound, kind: "drop"); selection = nil }
-                .controlSize(.small)
-            Button("Mark breakdown") { state.addMarker(start: range.lowerBound, end: range.upperBound, kind: "breakdown"); selection = nil }
-                .controlSize(.small)
-            Button("Play") { state.seek(toTimeline: range.lowerBound); state.player.play() }.controlSize(.small)
+            Group {
+                Button("Mark drop") { state.addMarker(start: range.lowerBound, end: range.upperBound, kind: "drop"); selection = nil }
+                Button("Mark breakdown") { state.addMarker(start: range.lowerBound, end: range.upperBound, kind: "breakdown"); selection = nil }
+                Button("Play") { state.seek(toTimeline: range.lowerBound); state.player.play() }
+            }
+            .controlSize(.small)
+            .modifier(SelectionButtons())
             Spacer()
             Button { selection = nil } label: { Image(systemName: "xmark.circle.fill") }.buttonStyle(.borderless)
         }
         .font(.callout)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(.quaternary.opacity(0.5))
+        .modifier(SelectionBarBackground())
+    }
+}
+
+/// Classic: the 2.0 grey bar. Liquid Glass: a floating glass capsule.
+private struct SelectionBarBackground: ViewModifier {
+    @AppStorage(Appearance.key) private var glass = true
+    func body(content: Content) -> some View {
+        if glass {
+            content.glassCapsule().glassGroup(spacing: 6).padding(.horizontal, 10).padding(.bottom, 6)
+        } else {
+            content.background(.quaternary.opacity(0.5))
+        }
+    }
+}
+
+private struct SelectionButtons: ViewModifier {
+    @AppStorage(Appearance.key) private var glass = true
+    func body(content: Content) -> some View {
+        if glass { content.glassButton() } else { content }
     }
 }
 

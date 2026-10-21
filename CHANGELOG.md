@@ -1,5 +1,11 @@
 # Changes
 
+## 2.1.1
+
+- Mac app: **Liquid Glass** look (macOS 26+): the preview controls float over the video in glass capsules, with a glass status bar, timeline selection bar, buttons and clip-length chips. **Settings → Appearance** (or **View → Liquid Glass**, ⌥⌘G) switches back to the Classic look at any time; macOS 14–15 get the nearest material look.
+- Web app (Docker, Windows, Linux, source): a matching **Glass** look (frosted panels, capsule buttons, tinted primary action) with a **Glass / Classic** switch in the header, remembered per browser.
+- The sidebar has one selection: clicking an audio excerpt highlights it (and nothing else) and loads it; clip-length chips that are on are filled in both looks.
+
 ## 2.1.0
 
 - Fixed a crash when switching between audio excerpts while the preview plays (2.0.0 could pair one excerpt's plan with another's cameras).

@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark"><title>Multicam Studio</title>
-<link rel="stylesheet" href="/static/app.css"><link rel="stylesheet" href="/static/studio.css">
-<script>window.MULTICAM_TOKEN = __MULTICAM_TOKEN__;</script>
+<link rel="stylesheet" href="/static/app.css"><link rel="stylesheet" href="/static/studio.css"><link rel="stylesheet" href="/static/glass.css">
+<script>window.MULTICAM_TOKEN = __MULTICAM_TOKEN__;try{if(localStorage.getItem('multicam-appearance')!=='classic')document.documentElement.classList.add('glass');}catch(e){document.documentElement.classList.add('glass');}</script>
 <script src="/static/app.js" defer></script>
 </head>
 <body>
 <header class="app-header">
   <a class="brand" href="/" aria-label="Multicam Studio home"><span class="brand-icon" aria-hidden="true"><i></i><i></i></span><span>Multicam <strong>Studio</strong></span></a>
-  <div class="header-right"><span class="local-badge"><span></span> LOCAL WORKSPACE</span><button class="quiet" id="save-settings">Save project</button><button class="quiet" id="load-settings">Load project</button><button class="quiet" id="open-preferences" aria-haspopup="dialog">Settings</button><input type="file" id="settings-file" accept=".json,application/json" hidden></div>
+  <div class="header-right"><span class="local-badge"><span></span> LOCAL WORKSPACE</span><button class="quiet" id="appearance-toggle" type="button" aria-pressed="true" title="Switch between the Glass and Classic appearance">Glass</button><button class="quiet" id="save-settings">Save project</button><button class="quiet" id="load-settings">Load project</button><button class="quiet" id="open-preferences" aria-haspopup="dialog">Settings</button><input type="file" id="settings-file" accept=".json,application/json" hidden></div>
 </header>
 <nav class="studio-tabs" aria-label="Studio tools"><button type="button" data-page="edit" aria-selected="true">01 <span>Multicam edit</span></button><button type="button" data-page="highlights" aria-selected="false">02 <span>Highlights</span></button><button type="button" data-page="effects" aria-selected="false">03 <span>Effects</span></button><button type="button" data-page="files" aria-selected="false" id="files-tab" hidden>04 <span>Files</span></button></nav>
 <div id="error-banner" class="notice error global-error" role="alert" hidden><span></span><button type="button" class="icon-button" aria-label="Dismiss error">×</button></div>

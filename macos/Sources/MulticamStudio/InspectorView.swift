@@ -273,11 +273,12 @@ struct ExportSettings: View {
                             state.project.clipLengths = lengths.sorted()
                             state.project.clips = lengths.min()!
                         }
-                        .buttonStyle(.bordered)
+                        .glassButton(prominent: on, classic: on ? .prominent : .bordered)
                         .tint(on ? .accentColor : nil)
                         .controlSize(.small)
                     }
                 }
+                .glassGroup(spacing: 6)
                 Picker("Framing", selection: $state.project.clipFraming) {
                     ForEach(ClipFraming.allCases) { Text($0.title).tag($0) }
                 }
@@ -326,7 +327,7 @@ struct ExportSettings: View {
                 Label(state.phase == .rendering ? "Exporting…" : "Export", systemImage: "square.and.arrow.up")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .glassButton(prominent: true)
             .controlSize(.large)
             .disabled(state.busy || !state.hasSources)
         }

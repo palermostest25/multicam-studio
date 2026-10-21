@@ -52,6 +52,8 @@ The app is signed but not notarized by Apple. The first time, Control-click it a
 
 **File ▸ Make Clips from a Finished Video…** cuts any finished video into beat-aligned clips (the 1.x Highlights tab).
 
+The browser version has a matching Glass look; the header's **Glass / Classic** button switches it, and each browser remembers the choice. The app uses Apple's Liquid Glass look on macOS 26 and later. **Settings → Appearance** (or **View ▸ Liquid Glass**, ⌥⌘G) switches to the Classic look.
+
 Projects are JSON files (**File ▸ Save Project**). The app also keeps a draft of your current project automatically.
 
 ## Run the web app from source
