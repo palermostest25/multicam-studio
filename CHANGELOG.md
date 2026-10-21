@@ -1,5 +1,10 @@
 # Changes
 
+## 2.4.0
+
+- Web app (Docker, TrueNAS): a proper **sign-in page** when `MULTICAM_PASSWORD` is set, instead of the browser's password pop-up. You stay signed in for 30 days (also across container restarts), there is a **Sign out** button, changing the password signs everyone out, and five wrong passwords make that address wait a minute. The compose files now set `MULTICAM_PASSWORD` (change `change-me`).
+- Renders run on the server and keep going when you close the page or turn your computer off; reopen the page to see progress.
+
 ## 2.3.0
 
 - **Social media alternatives** (on by default; Social clips settings in the Mac app and the browser). Every clip that uses a vertical recording is also saved in 9:16 in a `Social media alternatives` folder beside `Social media`, with the same subfolders and file names. The vertical camera fills the frame at its own shape and the wide cameras are shown whole with black bars, ready to upload to Instagram. Nothing else changes: the normal clips and full edits are exactly as before.

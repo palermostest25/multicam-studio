@@ -63,7 +63,7 @@ git merge --no-ff upstream/main            # merge commit, never rebase
 - `--host` other than `127.0.0.1`/`localhost` means `remote=True`. In that case:
   - Any `Host` header is accepted unless the `ALLOWED_HOSTS` allowlist is set.
   - `Origin` must match `Host` or `X-Forwarded-Host`, over http or https.
-  - Optional HTTP Basic auth via `MULTICAM_PASSWORD` (any user name).
+  - Sign-in via `MULTICAM_PASSWORD` (server mode only): `/login` page (`web/login.html`), `POST /api/login` sets a signed `multicam_session` cookie (HttpOnly, SameSite=Strict, 30 days; key = `state/session.key` + password, so a new password signs everyone out), `POST /api/logout`. 5 wrong passwords per address → 60 s wait. Pages redirect to `/login`, APIs return 401 (the UI then goes to `/login`). HTTP Basic auth still works for scripts. `/api/health` stays open.
   - `/api/shutdown` returns 409, and the UI hides `.quit-row` when `config.server_mode` is true.
   - There is no random-port fallback.
   - `/api/upload` saves into `default_folder` (the recordings folder) with `name (2).ext` de-duplication, via a hidden `.<hex>.uploading` partial file. Local mode still uses `state/uploads/<hex>/`.
@@ -140,7 +140,7 @@ python3 -m venv /tmp/mc-venv && /tmp/mc-venv/bin/pip install -q -r requirements.
 ```
 
 - **Local-mode smoke test:** `python server.py --port <p> --state-dir <scratch>`. `/` returns 200 with `Host: 127.0.0.1:<p>` and 403 with `Host: evil.com`.
-- **Server-mode smoke test:** `MULTICAM_PASSWORD=pw python server.py --host 0.0.0.0 --port <p> --state-dir <scratch>`. Check: `/api/health` 200 without auth, `/` 401 without auth, 200 with auth, a bad `Origin` gets 403, `/api/shutdown` gets 409, and `/api/config` has `server_mode: true`.
+- **Server-mode smoke test:** `MULTICAM_PASSWORD=pw python server.py --host 0.0.0.0 --port <p> --state-dir <scratch>`. Check: `/api/health` 200 without auth, `/` 303 to `/login` and `/api/config` 401 without auth, 200 after `POST /api/login`, a bad `Origin` gets 403, `/api/shutdown` gets 409, and `/api/config` has `server_mode: true`.
 - Docker: if the environment can build images, `docker build .` and run the container with the smoke tests above. In the Claude Code cloud sandbox, `deb.debian.org` and GitHub release downloads are blocked, so the FFmpeg layer can't be built or installed locally and FFmpeg-dependent tests are skipped. Rely on the GitHub Actions build for the full image, and say plainly which checks were skipped.
 - Windows can't be tested in the sandbox. Review Windows-specific code paths by reading them.
 
@@ -152,7 +152,7 @@ python3 -m venv /tmp/mc-venv && /tmp/mc-venv/bin/pip install -q -r requirements.
 
 ## The owner's Arcane deployment (reference; not a file in the repo)
 
-Server address 192.168.1.10 (LAN). The owner does **not** want a sign-in prompt: no `MULTICAM_PASSWORD`, protection comes from `MULTICAM_ALLOWED_HOSTS`. Shared host: all paths must be named volumes or under `/opt/Docker/appdata/<app>`. Port 4067. The image comes from GHCR, so it must be public or Arcane needs a ghcr.io login.
+Server address 192.168.1.10 (LAN). The owner wants the web page password-protected (`MULTICAM_PASSWORD` in the compose `environment:`, literal value) so nobody else uses the GPU; `MULTICAM_ALLOWED_HOSTS` stays too. Shared host: all paths must be named volumes or under `/opt/Docker/appdata/<app>`. Port 4067. The image comes from GHCR, so it must be public or Arcane needs a ghcr.io login.
 
 ```yaml
 services:
@@ -165,9 +165,10 @@ services:
     ports:
       - "4067:8765"
     environment:
-      # No sign-in: only requests addressed to this host are accepted.
+      # Only requests addressed to this host are accepted.
       MULTICAM_ALLOWED_HOSTS: "192.168.1.10"
-      # MULTICAM_PASSWORD: "..."   # add only if exposed beyond the home network
+      # Sign-in password for the web page. Change it before deploying.
+      MULTICAM_PASSWORD: "change-me"
     volumes:
       - /opt/Docker/appdata/multicam-studio/recordings:/media/recordings
       - /opt/Docker/appdata/multicam-studio/exports:/media/exports

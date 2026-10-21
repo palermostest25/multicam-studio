@@ -20,9 +20,10 @@ services:
     ports:
       - "4067:8765"
     environment:
-      # No sign-in: only requests addressed to this host are accepted.
+      # Only requests addressed to this host are accepted.
       MULTICAM_ALLOWED_HOSTS: "192.168.1.10"
-      # MULTICAM_PASSWORD: "..."   # add only if exposed beyond the home network
+      # Sign-in password for the web page. Change it before deploying.
+      MULTICAM_PASSWORD: "change-me"
       NVIDIA_VISIBLE_DEVICES: "all"
       NVIDIA_DRIVER_CAPABILITIES: "compute,video,utility"
     deploy:

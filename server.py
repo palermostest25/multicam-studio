@@ -23,6 +23,7 @@ import urllib.request
 import datetime as dt
 import importlib.util
 import hashlib
+import hmac
 import json
 import math
 import mimetypes
@@ -37,6 +38,7 @@ import sys
 import threading
 import time
 import traceback
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
 import webbrowser
@@ -48,7 +50,7 @@ else:
     import fcntl
 
 APP = Path(__file__).resolve().parent
-VERSION = '2.3.0'
+VERSION = '2.4.0'
 APP_ID = 'com.multicamstudio.desktop'
 DISCONNECTS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)
 _RUNNING_SERVER = None
@@ -373,6 +375,12 @@ def command_for(c, report):
     return cmd
 
 
+SESSION_COOKIE='multicam_session'
+SESSION_SECONDS=30*86400
+LOGIN_ATTEMPTS=5      # wrong passwords from one address before it must wait
+LOGIN_LOCKOUT=60      # seconds
+
+
 class Studio:
     def __init__(self,state,default_folder,default_output=None,roots=None,remote=False,allowed_hosts=(),password=''):
         self.state=state;state.mkdir(parents=True,exist_ok=True)
@@ -380,6 +388,19 @@ class Studio:
         self.default_output=default_output or default_folder/'Exports'
         self.remote=remote;self.allowed_hosts={h.strip().lower() for h in allowed_hosts if h.strip()}
         self.password=password
+        # Sign-in sessions are signed cookies. The key mixes a secret kept in the state folder
+        # (so restarts keep people signed in) with the password (so changing it signs everyone out).
+        key_path=state/'session.key'
+        try:secret=key_path.read_bytes()
+        except OSError:secret=b''
+        if len(secret)<32:
+            secret=secrets.token_bytes(32)
+            try:
+                key_path.write_bytes(secret)
+                os.chmod(key_path,0o600)
+            except OSError:pass
+        self.session_key=hashlib.sha256(secret+password.encode('utf-8')).digest()
+        self.login_failures={}
         self.setup_completed=any((state/'jobs').glob('*/job.json'))
         self.preferences_path=state/'preferences.json'
         self.dependency_cache=None
@@ -601,13 +622,40 @@ class Studio:
         self.dependency_cache=result
         return dict(result)
 
+    @property
+    def sign_in(self):
+        """A password is only asked for when the studio serves other machines."""
+        return bool(self.password) and self.remote
+
+    def session_value(self):
+        expiry=str(int(time.time())+SESSION_SECONDS)
+        return expiry+'.'+hmac.new(self.session_key,expiry.encode(),hashlib.sha256).hexdigest()
+
+    def valid_session(self,value):
+        expiry,_,signature=(value or '').partition('.')
+        if not expiry.isdigit() or int(expiry)<time.time():return False
+        return hmac.compare_digest(signature,hmac.new(self.session_key,expiry.encode(),hashlib.sha256).hexdigest())
+
+    def check_password(self,address,supplied):
+        """(ok, seconds to wait). Five wrong passwords from one address lock it out for a minute."""
+        now=time.monotonic()
+        with self.lock:
+            recent=[t for t in self.login_failures.get(address,[]) if now-t<LOGIN_LOCKOUT]
+            if len(recent)>=LOGIN_ATTEMPTS:
+                self.login_failures[address]=recent
+                return False,max(1,int(LOGIN_LOCKOUT-(now-recent[-LOGIN_ATTEMPTS])))
+            ok=isinstance(supplied,str) and hmac.compare_digest(supplied.encode('utf-8'),self.password.encode('utf-8'))
+            if ok:self.login_failures.pop(address,None)
+            else:self.login_failures[address]=recent+[now]
+            return ok,0
+
     def setup_snapshot(self):
         dependencies=self.dependencies()
         return {'version':VERSION,'completed':self.setup_completed,
                 'default_folder':str(self.default_folder),'default_output':str(self.default_output),
                 'dependencies':dependencies,'can_render':all(dependencies.values()),
                 'platform':platform.system(),'architecture':platform.machine(),
-                'server_mode':self.remote,'hardware':self.hardware()}
+                'server_mode':self.remote,'sign_in':self.sign_in,'hardware':self.hardware()}
 
     def hardware(self):
         try:
@@ -734,31 +782,56 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Referrer-Policy','no-referrer')
         self.send_header('X-Frame-Options','DENY')
         self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
-    def json_response(self,status,data):
+    def json_response(self,status,data,headers=()):
         body=json.dumps(data).encode();self.send_response(status);self.headers_common()
+        for name,value in headers:self.send_header(name,value)
         if status >= 400:
             self.close_connection=True
             self.send_header('Connection','close')
         self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(body)))
         self.end_headers()
         if self.command!='HEAD':self.wfile.write(body)
-    def authorised(self):
-        password=self.studio.password
-        if not password:return True
+    def cookie(self,name):
+        try:jar=SimpleCookie(self.headers.get('Cookie',''))
+        except CookieError:return ''
+        return jar[name].value if name in jar else ''
+    def signed_in(self):
+        if not self.studio.sign_in or self.studio.valid_session(self.cookie(SESSION_COOKIE)):return True
+        # Scripts may still send the password as HTTP Basic auth (any user name).
         auth=self.headers.get('Authorization','')
         if auth[:6].lower()=='basic ':
             try:
                 supplied=base64.b64decode(auth[6:].strip(),validate=True).decode('utf-8').partition(':')[2]
-                if secrets.compare_digest(supplied.encode(),password.encode()):return True
+                if hmac.compare_digest(supplied.encode(),self.studio.password.encode()):return True
             except (ValueError,UnicodeDecodeError):pass
-        body=json.dumps({'error':'Sign in to use Multicam Studio.'}).encode()
-        self.send_response(401);self.headers_common()
-        self.send_header('WWW-Authenticate','Basic realm="Multicam Studio", charset="UTF-8"')
-        self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(body)))
-        self.send_header('Connection','close');self.close_connection=True;self.end_headers()
-        if self.command!='HEAD':self.wfile.write(body)
         return False
-    def allowed(self,token=True):
+    def authorised(self):
+        if self.signed_in():return True
+        if self.command in ('GET','HEAD') and not urlparse(self.path).path.startswith('/api/'):
+            self.redirect('/login')
+        else:
+            self.json_response(401,{'error':'Sign in to use Multicam Studio.','sign_in':True})
+        return False
+    def redirect(self,location,headers=()):
+        self.send_response(303);self.headers_common()
+        for name,value in headers:self.send_header(name,value)
+        self.send_header('Location',location);self.send_header('Content-Length','0');self.end_headers()
+    def session_cookie(self,value,max_age):
+        secure='; Secure' if self.headers.get('X-Forwarded-Proto','').split(',')[0].strip().lower()=='https' else ''
+        return ('Set-Cookie',f'{SESSION_COOKIE}={value}; Max-Age={max_age}; Path=/; HttpOnly; SameSite=Strict{secure}')
+    def login(self,path):
+        if path=='/api/logout':
+            return self.json_response(200,{'ok':True},[self.session_cookie('',0)])
+        if not self.studio.sign_in:return self.json_response(200,{'ok':True})
+        data=self.read_json()
+        ok,wait=self.studio.check_password(self.client_address[0],data.get('password') if isinstance(data,dict) else None)
+        if wait:
+            return self.json_response(429,{'error':f'Too many wrong passwords. Try again in {wait} s.','retry_after':wait})
+        if not ok:
+            time.sleep(0.4)  # slows guessing without blocking other requests
+            return self.json_response(401,{'error':'That password is not right.'})
+        return self.json_response(200,{'ok':True},[self.session_cookie(self.studio.session_value(),SESSION_SECONDS)])
+    def allowed(self,token=True,auth=True):
         host=self.headers.get('Host','').strip().lower()
         origin=self.headers.get('Origin')
         if self.studio.remote:
@@ -771,7 +844,7 @@ class Handler(BaseHTTPRequestHandler):
             sites={host}|{h.strip().lower() for h in self.headers.get('X-Forwarded-Host','').split(',') if h.strip()}
             if origin and origin.lower() not in {f'{scheme}://{h}' for h in sites for scheme in ('http','https')}:
                 self.json_response(403,{'error':'Request origin is not allowed.'});return False
-            if not self.authorised():return False
+            if auth and not self.authorised():return False
         else:
             port=self.server.server_port
             hosts={f'127.0.0.1:{port}',f'localhost:{port}'}
@@ -795,6 +868,10 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/health':
             # Unauthenticated liveness check, also used by the Docker healthcheck.
             return self.json_response(200,{'app_id':APP_ID,'version':VERSION,'instance_id':self.studio.token[:16]})
+        if u.path=='/login':
+            if not self.allowed(token=False,auth=False):return
+            if self.signed_in():return self.redirect('/')
+            return self.bytes_response((APP/'web/login.html').read_bytes(),'text/html; charset=utf-8')
         if not self.allowed(token=u.path.startswith('/api/') and not u.path.startswith('/api/files/') and u.path!='/api/health'): return
         try:
             if u.path=='/api/health':
@@ -888,8 +965,12 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self.wfile.write(data);remaining-=len(data)
     def do_POST(self):
-        if not self.allowed():return
         u=urlparse(self.path)
+        if u.path in ('/api/login','/api/logout'):
+            if not self.allowed(token=False,auth=False):return
+            try:return self.login(u.path)
+            except ValueError as exc:return self.error_response(400,exc)
+        if not self.allowed():return
         try:
             if u.path=='/api/upload':return self.upload(parse_qs(u.query))
             data=self.read_json()

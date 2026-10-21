@@ -36,11 +36,13 @@
     const options = {headers: {'X-Multicam-Token': window.MULTICAM_TOKEN}};
     if(data !== undefined) { options.method = 'POST'; options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(data); }
     const response = await fetch(path, options);
+    if(response.status === 401) { location.href = '/login'; throw new Error('Sign in to continue.'); }
     let body; try {body = await response.json();} catch {throw new Error(`Server returned ${response.status}. Make sure Multicam Studio is still running.`);}
     if(!response.ok) throw new Error(body.error || body.message || `Request failed (${response.status})`);
     return body;
   }
   $('error-banner').querySelector('button').addEventListener('click', () => { $('error-banner').hidden = true; });
+  $('sign-out').addEventListener('click', async () => { try { saveLocalDraft(); } catch {} await fetch('/api/logout', {method: 'POST'}).catch(() => {}); location.href = '/login'; });
 
   function renderFiles(target) {
     const list = $(`files-${target}`); if(!list)return; list.replaceChildren();
@@ -344,7 +346,7 @@
   async function initialize() {
     renderCameraCards();renderOverrides();updateFormat();
     try {
-      state.config=await api('/api/config');if(state.config.hardware?.summary)$('hardware-note').textContent=`This ${state.config.server_mode?'server':'computer'}: ${state.config.hardware.summary}.`;$('output-dir').value=state.config.default_output||state.config.default_folder||'';for(const id of ['highlight-output','effects-output'])$(id).value=$('output-dir').value;if(state.config.server_mode)applyServerMode();
+      state.config=await api('/api/config');if(state.config.hardware?.summary)$('hardware-note').textContent=`This ${state.config.server_mode?'server':'computer'}: ${state.config.hardware.summary}.`;$('output-dir').value=state.config.default_output||state.config.default_folder||'';for(const id of ['highlight-output','effects-output'])$(id).value=$('output-dir').value;if(state.config.server_mode)applyServerMode();$('sign-out').hidden=!state.config.sign_in;
       const dependencies=state.config.dependencies||{};const missing=Object.entries(dependencies).filter(([,value])=>!value||(typeof value==='object'&&value.available===false)).map(([key])=>key);
       if(missing.length){$('dependency-warning').textContent=`Setup needed: ${missing.join(', ')}. Open Settings to check the editing tools before rendering.`;$('dependency-warning').hidden=false;}
       const result=await api('/api/jobs');const jobs=result.jobs||[];const previousEdit=jobs.find(j=>(j.kind==='edit'||!j.kind)&&j.config?.audio);if(previousEdit?.config)applyConfig(previousEdit.config);const exportedEdit=jobs.find(j=>(j.kind==='edit'||!j.kind)&&j.report?.outputs?.video);if(exportedEdit){state.latestEdit=exportedEdit.report.outputs.video;$('highlight-source').value=state.latestEdit;$('effects-source').value=state.latestEdit;}const active=jobs.find(job=>['queued','running'].includes(job.status));const latest=active||jobs[0];

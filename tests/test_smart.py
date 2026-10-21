@@ -270,5 +270,28 @@ class ServerTests(unittest.TestCase):
                     server.validate_config({**base, **bad})
 
 
+class SignInTests(unittest.TestCase):
+    def test_sessions_and_lockout(self):
+        import server
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            studio = server.Studio(root / 'state', root, remote=True, password='disco')
+            self.assertTrue(studio.sign_in)
+            value = studio.session_value()
+            self.assertTrue(studio.valid_session(value))
+            self.assertFalse(studio.valid_session(value[:-1] + ('0' if value[-1] != '0' else '1')))
+            self.assertFalse(studio.valid_session('1.' + value.split('.')[1]))   # expired
+            # The same state folder keeps sessions across restarts; a new password signs everyone out.
+            self.assertTrue(server.Studio(root / 'state', root, remote=True, password='disco').valid_session(value))
+            self.assertFalse(server.Studio(root / 'state', root, remote=True, password='other').valid_session(value))
+            self.assertEqual(studio.check_password('1.2.3.4', 'disco'), (True, 0))
+            for _ in range(server.LOGIN_ATTEMPTS):
+                self.assertEqual(studio.check_password('1.2.3.4', 'nope'), (False, 0))
+            ok, wait = studio.check_password('1.2.3.4', 'disco')
+            self.assertFalse(ok); self.assertGreater(wait, 0)
+            self.assertEqual(studio.check_password('5.6.7.8', 'disco'), (True, 0))   # other addresses unaffected
+            self.assertFalse(server.Studio(root / 'local', root, remote=False, password='disco').sign_in)
+
+
 if __name__ == '__main__':
     unittest.main()

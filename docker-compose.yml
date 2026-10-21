@@ -11,9 +11,10 @@ services:
     ports:
       - "4067:8765"
     environment:
-      # No sign-in: only requests addressed to this host are accepted.
+      # Only requests addressed to this host are accepted.
       MULTICAM_ALLOWED_HOSTS: "192.168.1.10"
-      # MULTICAM_PASSWORD: "..."   # add only if exposed beyond the home network
+      # Sign-in password for the web page. Change it before deploying.
+      MULTICAM_PASSWORD: "change-me"
     volumes:
       # Create these first and chown them to the user above.
       - /opt/Docker/appdata/multicam-studio/recordings:/media/recordings
