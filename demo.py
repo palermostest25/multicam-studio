@@ -380,23 +380,24 @@ def build_report(config, job_dir):
 
 def demo_clips(config, rows, duration, name):
     """Evenly spaced, whole-bar (124 BPM) social clips, as the smart planner reports them."""
-    length = float(config.get('clips') or 0)
-    if not length:
-        return []
+    lengths = config.get('clip_lengths') or ([config['clips']] if config.get('clips') else [])
     bar = 4*60/124
-    length = max(1, round(length/bar))*bar
-    count = int(config.get('clip_count') or 0) or max(1, int(duration//length))
-    count = min(count, max(1, int(duration//length)))
-    gap = (duration-count*length)/(count+1)
     clips = []
-    for index in range(count):
-        start = round(gap+index*(length+gap), 3)
-        end = round(start+length, 3)
-        shots = [{**r, 'start_seconds': max(r['start_seconds'], start)-start, 'end_seconds': min(r['end_seconds'], end)-start}
-                 for r in rows if r['end_seconds'] > start and r['start_seconds'] < end]
-        clips.append({'index': index+1, 'start': start, 'end': end, 'score': 1.0, 'duration': round(length, 3),
-                      'path': str(Path(config['output_dir'])/f'{name}_clips'/f'{name}_{index+1:03d}.mp4'),
-                      'rendered': False, 'shots': shots})
+    for requested in lengths:
+        length = max(1, round(float(requested)/bar))*bar
+        count = int(config.get('clip_count') or 0) or max(1, int(duration//length))
+        count = min(count, max(1, int(duration//length)))
+        gap = (duration-count*length)/(count+1)
+        for number in range(1, count+1):
+            start = round(gap+(number-1)*(length+gap), 3)
+            end = round(start+length, 3)
+            shots = [{**r, 'start_seconds': max(r['start_seconds'], start)-start, 'end_seconds': min(r['end_seconds'], end)-start}
+                     for r in rows if r['end_seconds'] > start and r['start_seconds'] < end]
+            folder = Path(config['output_dir'])/f'{name}_clips'/f'{round(requested)}s'
+            clips.append({'index': len(clips)+1, 'number': number, 'length': float(requested),
+                          'start': start, 'end': end, 'score': 1.0, 'duration': round(length, 3),
+                          'path': str(folder/f'{name}_{round(requested):02d}s_{number:03d}.mp4'),
+                          'rendered': False, 'shots': shots})
     return clips
 
 
@@ -405,6 +406,9 @@ def demo_clips(config, rows, duration, name):
 class DemoStudio(server.Studio):
     def dependencies(self):
         return {'ffmpeg': True, 'ffprobe': True, 'numpy': True, 'scipy': True}
+
+    def hardware(self):
+        return {'name': None, 'gpu': '', 'encoders': [], 'summary': 'Demo mode (nothing is rendered)'}
 
     def worker(self, job):
         directory = Path(job['directory'])
