@@ -112,7 +112,7 @@ The Docker image serves the same web interface to other machines, so you can run
    | --- | --- |
    | `user` | uid:gid the studio runs as; owner of exported files |
    | `ports` | `4067:8765` publishes the studio on host port 4067 |
-   | `MULTICAM_PASSWORD` | Optional browser sign-in (any user name). Leave it out on a trusted home network |
+   | `MULTICAM_PASSWORD` | Password for the sign-in page, so nobody else can use the studio (or your GPU). Leave it out only on a trusted network |
    | `MULTICAM_ALLOWED_HOSTS` | Host names or IPs you open the studio with, comma-separated (for example the server's LAN IP). Keep it set when there's no password |
    | `volumes` | Recordings (`/media/recordings`), exports (`/media/exports`) and app state (`/state`) |
 

@@ -40,6 +40,6 @@ select{text-overflow:ellipsis}
 .studio-tabs button:hover{background:transparent;color:var(--text)}
 .studio-tabs button[aria-selected=true],.studio-tabs button[aria-selected=true]:hover{color:var(--accent);border-color:#424d36;background:#252e1e}
 @media(max-width:520px){.app-header{height:auto;min-height:0;flex-wrap:wrap;padding:12px 16px;gap:10px}
-.header-right{flex:1 1 100%;max-width:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.header-right{flex:1 1 100%;max-width:none;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px}
 .header-right>:not(button){display:none}
 .header-right button{font-size:13px;padding:8px 6px;white-space:nowrap}}
