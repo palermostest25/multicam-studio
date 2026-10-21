@@ -93,6 +93,7 @@ References: https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.co
 from __future__ import annotations
 
 import argparse
+import copy
 from dataclasses import dataclass
 import itertools
 import hashlib
@@ -114,6 +115,7 @@ try:
 except ImportError:
     sys.exit("Install dependencies: python3 -m pip install numpy scipy")
 
+import hardware
 import music
 import planner
 import vision
@@ -248,6 +250,8 @@ class Camera:
     matched_anchors: int | None = None
     label: str = ""
     framing: dict | None = None
+    width: int = 0    # displayed (rotation-corrected) size
+    height: int = 0
 
 
 def read_camera(path, angle):
@@ -260,9 +264,18 @@ def read_camera(path, angle):
     duration = stream_duration(info, v)
     if not math.isfinite(duration) or duration <= 0:
         raise RuntimeError(f"Cannot determine video duration: {path.name}")
+    width, height = int(v.get("width") or 0), int(v.get("height") or 0)
+    rotation = next((s.get("rotation", 0) for s in v.get("side_data_list", []) if "rotation" in s),
+                    v.get("tags", {}).get("rotate", 0))
+    try:
+        if abs(round(float(rotation))) % 180 == 90:
+            width, height = height, width
+    except (TypeError, ValueError):
+        pass
     return Camera(path, angle, duration, number(v, "start_time"),
                   number(info["format"], "start_time"),
-                  number(audios[0], "start_time") if audios else 0.0, bool(audios))
+                  number(audios[0], "start_time") if audios else 0.0, bool(audios),
+                  width=width, height=height)
 
 
 def discover_inputs(folder, audio=None, cam_a=None, cam_b=None):
@@ -674,8 +687,6 @@ ASPECTS = {"16:9": (16, 9), "9:16": (9, 16), "1:1": (1, 1), "4:5": (4, 5)}
 RESOLUTIONS = (2160, 1440, 1080, 720)
 CODECS = ("h264", "hevc", "prores")
 CODEC_NAMES = {"h264": "h264", "hevc": "hevc", "prores": "prores"}
-_ENCODERS = None
-_HWACCELS = None
 
 
 def frame_size(aspect, resolution):
@@ -693,55 +704,42 @@ def output_size(mode):
     return (HEIGHT, WIDTH) if mode == "vertical" else (WIDTH, HEIGHT)
 
 
-def ffmpeg_lists():
-    global _ENCODERS, _HWACCELS
-    if _ENCODERS is None:
-        try:
-            _ENCODERS = run(["ffmpeg", "-hide_banner", "-encoders"])
-            _HWACCELS = run(["ffmpeg", "-hide_banner", "-hwaccels"])
-        except (RuntimeError, OSError):
-            _ENCODERS, _HWACCELS = "", ""
-    return _ENCODERS, _HWACCELS
-
-
 def hardware_available(codec="h264"):
-    """VideoToolbox (macOS) encoders; Docker and Windows use software encoders."""
-    if sys.platform != "darwin":
-        return False
-    encoders, _ = ffmpeg_lists()
-    return {"h264": "h264_videotoolbox", "hevc": "hevc_videotoolbox",
-            "prores": "prores_videotoolbox"}[codec] in encoders
+    """A working hardware encoder: VideoToolbox on macOS, NVENC with an NVIDIA GPU (see hardware.py)."""
+    return hardware.encoder(codec) is not None
 
 
 def hardware_decode_args(args):
-    if args.encoder == "software" or sys.platform != "darwin":
+    if args.encoder == "software":
         return []
-    _, hwaccels = ffmpeg_lists()
-    return ["-hwaccel", "videotoolbox"] if "videotoolbox" in hwaccels else []
+    return hardware.decode_args()
 
 
 def encoder_args(args, width, height):
     """FFmpeg video encoder arguments for --codec/--encoder/--crf/--preset."""
-    hardware = args.encoder != "software" and hardware_available(args.codec)
-    if args.encoder == "hardware" and not hardware:
+    name = hardware.encoder(args.codec) if args.encoder != "software" else None
+    if args.encoder == "hardware" and not name:
         print(f"NOTE: no hardware {args.codec} encoder here; using the software encoder.", flush=True)
     if args.codec == "prores":
-        if hardware:
-            return ["-c:v", "prores_videotoolbox", "-profile:v", "2", "-pix_fmt", "yuv422p10le"], True
+        if name:
+            return ["-c:v", name, "-profile:v", "2", "-pix_fmt", "yuv422p10le"], True
         return ["-c:v", "prores_ks", "-profile:v", "2", "-pix_fmt", "yuv422p10le",
                 "-vendor", "apl0"], False
     # Bits per pixel equivalent to the requested CRF for busy, dark club footage.
     bpp = 0.15 * 2 ** ((18 - args.crf) / 6) * (0.6 if args.codec == "hevc" else 1)
     rate = int(min(200e6, max(1e6, bpp * width * height * args.fps)))
+    rates = ["-b:v", str(rate), "-maxrate", str(int(rate * 1.5)), "-bufsize", str(rate * 2)]
+    hvc1 = ["-tag:v", "hvc1"] if args.codec == "hevc" else []
+    if name and name.endswith("_nvenc"):
+        profile = ["-profile:v", "high"] if args.codec == "h264" else ["-profile:v", "main"]
+        return ["-c:v", name, "-preset", "p5", "-tune", "hq", "-rc", "vbr", *rates, *profile,
+                "-bf", "0", "-pix_fmt", "yuv420p", *hvc1], True
+    if name:
+        profile = ["-profile:v", "high"] if args.codec == "h264" else []
+        return ["-c:v", name, *rates, *profile, "-bf", "0", "-pix_fmt", "yuv420p", *hvc1], True
     if args.codec == "hevc":
-        if hardware:
-            return ["-c:v", "hevc_videotoolbox", "-b:v", str(rate), "-maxrate", str(int(rate * 1.5)),
-                    "-bufsize", str(rate * 2), "-tag:v", "hvc1", "-bf", "0", "-pix_fmt", "yuv420p"], True
         return ["-c:v", "libx265", "-preset", args.preset, "-crf", str(min(51, args.crf + 3)),
                 "-x265-params", "bframes=0:log-level=error", "-tag:v", "hvc1", "-pix_fmt", "yuv420p"], False
-    if hardware:
-        return ["-c:v", "h264_videotoolbox", "-b:v", str(rate), "-maxrate", str(int(rate * 1.5)),
-                "-bufsize", str(rate * 2), "-profile:v", "high", "-bf", "0", "-pix_fmt", "yuv420p"], True
     return ["-c:v", "libx264", "-preset", args.preset, "-crf", str(args.crf),
             "-pix_fmt", "yuv420p", "-bf", "0"], False
 
@@ -1141,9 +1139,11 @@ def build_parser():
     parser.add_argument("--vision", choices=["auto", "on", "off"], default="auto",
                         help="Score camera pictures (auto: when hardware decoding is available)")
     parser.add_argument("--cache-dir", metavar="PATH", help="Reusable analysis cache folder")
-    parser.add_argument("--clips", type=float, default=0, metavar="SECONDS",
+    parser.add_argument("--clips", type=clip_lengths, default=[], metavar="SECONDS[,SECONDS…]",
                         help="Also export short clips of about this length (e.g. 15 for Reels)")
-    parser.add_argument("--clip-count", type=int, default=5, help="How many clips (0 = all, in sequence mode)")
+    parser.add_argument("--clip-count", type=int, default=5, help="How many clips per length (0 = all that fit)")
+    parser.add_argument("--clip-framing", choices=["smart", "fit", "crop", "same"], default="smart",
+                        help="Clip framing: smart fits wide shots over a blurred fill and crops close matches")
     parser.add_argument("--clip-mode", choices=["best", "sequence"], default="best",
                         help="best: the most energetic moments; sequence: the whole set in order")
     parser.add_argument("--clip-aspect", choices=list(ASPECTS), default="9:16")
@@ -1222,9 +1222,42 @@ def plan_sections(args, reference, duration, music_info):
                   key=lambda s: s["start"])
 
 
-def clip_name(base, index, start, extension):
+def clip_lengths(text):
+    """'15' or '15,30,60' -> sorted unique lengths in seconds (3-600)."""
+    try:
+        values = sorted({float(part) for part in str(text).replace(" ", "").split(",") if part})
+    except ValueError:
+        raise argparse.ArgumentTypeError("Use seconds, or several separated by commas: 15,30,60") from None
+    if not values or any(not math.isfinite(v) or not 3 <= v <= 600 for v in values):
+        raise argparse.ArgumentTypeError("Clip lengths must be between 3 and 600 seconds")
+    return values
+
+
+def clip_name(base, length, number, start, extension):
     whole = int(start)
-    return f"{base}_{index:03d}_{whole//3600:02d}-{whole//60 % 60:02d}-{whole % 60:02d}.{extension}"
+    return (f"{base}_{round(length):02d}s_{number:03d}_"
+            f"{whole//3600:02d}-{whole//60 % 60:02d}-{whole % 60:02d}.{extension}")
+
+
+def clip_framing(camera, aspect, mode, b_center=(0.5, 0.72)):
+    """Framing for a recording in short clips. Cropping wide footage to 9:16 often cuts the
+    DJ off, so 'smart' fits wide shots over a blurred fill and only crops close matches.
+    Mirrors Engine.clipFraming in the Swift app."""
+    framing = dict(camera.framing) if camera.framing is not None else {"mode": "crop", "center": list(b_center), "zoom": 1}
+    crop = {**framing, "mode": "crop"}
+    if framing.get("mode") != "crop":
+        crop.update(auto=True, zoom=1)
+    fit = {**framing, "mode": "fit"}
+    if mode == "same":
+        return framing
+    if mode == "fit":
+        return fit
+    if mode == "crop":
+        return crop
+    w, h = ASPECTS[aspect]
+    source = camera.width / camera.height if camera.width and camera.height else 16 / 9
+    kept = min(w / h, source) / max(w / h, source)
+    return (framing if framing.get("mode") == "pad" else crop) if kept >= 0.55 else fit
 
 
 def main(argv=None):
@@ -1244,8 +1277,8 @@ def main(argv=None):
         parser.error("--a-center values must be finite and between 0 and 1")
     if any(not 0 <= v <= 1 for v in args.b_center):
         parser.error("--b-center values must be finite and between 0 and 1")
-    if args.clips and not 3 <= args.clips <= 600:
-        parser.error("--clips must be between 3 and 600 seconds")
+    args.clip_lengths = list(args.clips)
+    args.clips = args.clip_lengths[0] if args.clip_lengths else 0
     if args.clips_only and not args.clips:
         parser.error("--clips-only needs --clips SECONDS")
     if not 0 <= args.clip_count <= 500 or not 0 <= args.clip_fade <= 5 or not 0 <= args.jobs <= 16:
@@ -1332,7 +1365,7 @@ def main(argv=None):
         existing = next(p for p in protected if p.exists())
         raise FileExistsError(f"Output already exists: {existing}. Use --overwrite to replace it.")
     if (args.clips and not args.plan_only and not args.overwrite and clip_folder.is_dir()
-            and any(clip_folder.glob(f"{output_name}_[0-9][0-9][0-9]_*")) ):
+            and any(clip_folder.glob(f"*/{output_name}_*s_[0-9][0-9][0-9]_*")) ):
         raise FileExistsError(f"Clips already exist in {clip_folder}. Use --overwrite to replace them.")
     if any(p.exists() and not p.is_file() for p in all_outputs):
         raise ValueError("An output path refers to a directory; choose a different path")
@@ -1412,24 +1445,27 @@ def main(argv=None):
         shots = apply_shot_overrides(shots, cameras, shot_overrides, args.fps, duration)
         write_cut_list(cut_list, shots, cameras, duration, args, drops, breakdowns)
         clips = []
-        if args.clips:
-            windows = planner.window_scores(args.music, cameras, total, args.fps, args.clips, scores)
+        short = planner.Rhythm(**{**planner.SHORT_FORM.__dict__, "cut_scale": args.cut_scale, "candidates": 24})
+        forced = [s for s in shots if s.reason == "manual shot override"]
+        for length in args.clip_lengths:
+            windows = planner.window_scores(args.music, cameras, total, args.fps, length, scores)
             chosen = planner.choose_clips(windows, args.clip_count, args.clip_mode)
-            short = planner.Rhythm(**{**planner.SHORT_FORM.__dict__, "cut_scale": args.cut_scale,
-                                      "candidates": 24})
-            forced = [s for s in shots if s.reason == "manual shot override"]
-            for index, w in enumerate(chosen, 1):
+            for number, w in enumerate(chosen, 1):
+                index = len(clips) + 1
                 window = (round(w["start"] * args.fps), round(w["end"] * args.fps))
                 plan = planner.plan(cameras, total, args.fps, args.music, args.sections, args.activity,
                                     args.seed + index, args.main_camera, short, window=window, scores=scores)
                 plan = overlay_forced(plan, forced, *window)
-                path = clip_folder / clip_name(output_name, index, w["start"], extension)
-                clips.append({"index": index, "start": w["start"], "end": w["end"], "score": w["score"],
+                path = clip_folder / f"{round(length)}s" / clip_name(output_name, length, number, w["start"], extension)
+                clips.append({"index": index, "number": number, "length": length,
+                              "start": w["start"], "end": w["end"], "score": w["score"],
                               "duration": round(w["end"] - w["start"], 3), "path": str(path),
                               "rendered": False, "plan": plan,
                               "shots": shot_rows(plan, cameras, args.fps, duration, w["start"])})
-            print(f"Planned {len(clips)} clip(s) of about {args.clips:g}s "
-                  f"({args.clip_aspect}, {'best moments' if args.clip_mode == 'best' else 'in sequence'})", flush=True)
+        if clips:
+            print(f"Planned {len(clips)} clip(s) at " + ", ".join(f"{v:g}s" for v in args.clip_lengths)
+                  + f" ({args.clip_aspect}, {'best moments' if args.clip_mode == 'best' else 'in sequence'}, "
+                  f"{args.clip_framing} framing)", flush=True)
         pw, ph = (540, 960) if args.mode == "vertical" else (960, round(960 * args.size[1] / args.size[0] / 2) * 2)
         if args.aspect in ("1:1", "4:5"):
             pw, ph = 720, round(720 * args.size[1] / args.size[0] / 2) * 2
@@ -1451,7 +1487,8 @@ def main(argv=None):
         done_seconds = 0.0
         for number, (kind, clip) in enumerate(deliverables, 1):
             weight = full_seconds if kind == "full" else clip["duration"]
-            title = "full edit" if kind == "full" else f"clip {clip['index']} ({timecode(clip['start'])})"
+            title = ("full edit" if kind == "full"
+                     else f"{round(clip['length'])} s clip {clip['number']} ({timecode(clip['start'])})")
             print(f"Deliverable {number}/{len(deliverables)} weight={weight:.3f} done={done_seconds:.3f} "
                   f"total={total_seconds:.3f}: {title}", flush=True)
             if kind == "full" and args.range:
@@ -1465,7 +1502,10 @@ def main(argv=None):
                 render(shots, cameras, bounce, duration, work, output, args, label="")
             else:
                 size = output_size(frame_size(args.clip_aspect, args.clip_resolution))
-                render(clip["plan"], cameras, bounce, duration, work, Path(clip["path"]), args, size=size,
+                framed = [copy.copy(c) for c in cameras]
+                for c in framed:
+                    c.framing = clip_framing(c, args.clip_aspect, args.clip_framing, args.b_center)
+                render(clip["plan"], framed, bounce, duration, work, Path(clip["path"]), args, size=size,
                        window=(round(clip["start"] * args.fps), round(clip["end"] * args.fps)),
                        fade=args.clip_fade, label=f"Clip {clip['index']} · ")
                 clip["rendered"] = True

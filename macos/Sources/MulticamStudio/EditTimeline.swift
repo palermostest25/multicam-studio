@@ -91,7 +91,7 @@ struct EditTimeline: View {
 
     func canvas(scale: Double) -> some View {
         let analysis = state.currentAnalysis
-        let plan = state.plan
+        let plan = state.activePlan
         let part = state.currentPart
         let playhead = clock.time + state.previewOffset
         let ids = self.ids

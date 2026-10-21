@@ -242,29 +242,42 @@ struct ExportSettings: View {
             }
 
             Divider()
-            Toggle(isOn: Binding(get: { state.project.clips > 0 }, set: { state.project.clips = $0 ? 15 : 0 })) {
+            Toggle(isOn: Binding(get: { state.project.clips > 0 }, set: { on in
+                state.project.clips = on ? 15 : 0
+                if on && state.project.clipLengths.isEmpty { state.project.clipLengths = [15, 30, 60] }
+            })) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Short clips").font(.headline)
-                    Text("Reels, Shorts and TikTok: cut on bar lines, quicker editing").font(.caption).foregroundStyle(.secondary)
+                    Text("Social clips").font(.headline)
+                    Text("Reels, Shorts and TikTok at several lengths, exported beside the full edit").font(.caption).foregroundStyle(.secondary)
                 }
             }
             if state.project.clips > 0 {
+                Text("Lengths (each gets its own folder)").font(.caption).foregroundStyle(.secondary)
                 HStack(spacing: 6) {
                     ForEach([7.0, 15, 30, 60, 90], id: \.self) { length in
-                        Button("\(Int(length)) s") { state.project.clips = length }
-                            .buttonStyle(.bordered)
-                            .tint(state.project.clips == length ? .accentColor : nil)
-                            .controlSize(.small)
+                        let on = state.project.socialLengths.contains(length)
+                        Button("\(Int(length)) s") {
+                            var lengths = Set(state.project.socialLengths)
+                            if on { lengths.remove(length) } else { lengths.insert(length) }
+                            if lengths.isEmpty { lengths = [length] }
+                            state.project.clipLengths = lengths.sorted()
+                            state.project.clips = lengths.min()!
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(on ? .accentColor : nil)
+                        .controlSize(.small)
                     }
                 }
-                Stepper(value: $state.project.clips, in: 3...600, step: 1) {
-                    Text("About \(Int(state.project.clips)) seconds each")
+                Picker("Framing", selection: $state.project.clipFraming) {
+                    ForEach(ClipFraming.allCases) { Text($0.title).tag($0) }
                 }
+                Text("Cropping wide footage to vertical often cuts the DJ off. Smart keeps the whole picture over a blurred background for wide shots, while the clips keep their quick, on-the-beat cuts.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Picker("Choose", selection: $state.project.clipMode) {
                     ForEach(ClipMode.allCases) { Text($0.title).tag($0) }
                 }
                 Stepper(value: $state.project.clipCount, in: 0...200) {
-                    Text(state.project.clipCount == 0 ? "As many as fit" : "\(state.project.clipCount) clip\(state.project.clipCount == 1 ? "" : "s")")
+                    Text(state.project.clipCount == 0 ? "As many as fit, per length" : "\(state.project.clipCount) clip\(state.project.clipCount == 1 ? "" : "s") per length")
                 }
                 FormatPicker(aspect: $state.project.clipAspect, resolution: $state.project.clipResolution)
                 LabeledSlider(title: "Audio fade", value: $state.project.clipFade, range: 0...2,
@@ -292,7 +305,7 @@ struct ExportSettings: View {
             LookSettings()
 
             Divider()
-            if let plan = state.plan {
+            if let plan = state.activePlan {
                 let count = (state.project.fullEdit ? 1 : 0) + plan.clips.count
                 Text("\(count) video\(count == 1 ? "" : "s") per audio excerpt · hardware encoding")
                     .font(.caption).foregroundStyle(.secondary)

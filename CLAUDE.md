@@ -101,11 +101,17 @@ git merge --no-ff upstream/main            # merge commit, never rebase
 - Server: `Studio.start` overwrites `cache_dir` (state/cache) and, in server mode, `output_dir` = `export_subfolder(output_subfolder)` inside `default_output`; never trust a client path there. The library lists 3 levels deep and delete accepts nested files inside the two folders only.
 - **Parity rule:** `music.py` ↔ `macos/Sources/MulticamCore/MusicAnalysis.swift`, `vision.py` ↔ `VisionAnalysis.swift`, `planner.py` ↔ `Planner.swift`, and sync (`multicam_edit.synchronise`) ↔ `Sync.swift`. Change both sides together. Python tests: `tests/test_smart.py`; Swift: `cd macos && swift test`. The Swift audio decoder resamples with AVAudioConverter (`primeMethod = .normal`); AVAssetReader's own resampler adds a rate-dependent delay that skews sync by 20–30 ms.
 
+- `hardware.py` (stdlib only; server.py and the demo import it) detects a working hardware encoder with a real one-frame encode: VideoToolbox on macOS, NVENC + CUDA decode on Linux/Docker with an NVIDIA GPU. `multicam_edit.encoder_args` and `vision.hardware_decoding` use it. `setup_snapshot()`/`diagnostics()` include `hardware`.
+- Social clips: `--clips` takes several lengths (`15,30,60`), and the server stores `clip_lengths`. A project with `clips: 0` has clips off even when `clip_lengths` is set (the Mac app saves it that way). Clips go to `<name>_clips/<L>s/<name>_<L>s_<n>_HH-MM-SS.ext`. `--clip-framing smart|fit|crop|same` (`clip_framing` in multicam_edit ↔ `Engine.clipFraming` in Swift): smart crops only when the zoom-1 crop keeps ≥55% of the picture, otherwise fit with blur.
+- `docker-compose.nvidia.yml` is the GPU variant of the compose (deploy.resources GPU reservation, `NVIDIA_VISIBLE_DEVICES`, `NVIDIA_DRIVER_CAPABILITIES`; literal values, no `.env`). The Docker workflow fails if the image's FFmpeg lacks `h264_nvenc`/`hevc_nvenc`.
+
 ### Native macOS app (`macos/`) — ours
 - Swift package: `MulticamCore` (engine), `MulticamStudio` (SwiftUI app), `mcstudio` (CLI), tests. `macos/build-app.sh` makes the universal app + DMG (`SIGN_IDENTITY`, `ARCHS`, `SCRATCH`, `DIST` env vars). Build scratch should live on the internal disk.
 - It reads/writes the same project JSON as the web UI (`Project` in `Models.swift` maps the snake_case keys; keep new web keys in step).
 - This is the Mac release. `desktop.py` and `packaging/` (the 1.x PyInstaller app) stay as upstream has them, but README/releases point to the native app. GitHub releases: `v2.x.y` tags with `Multicam-Studio-<version>-macOS.dmg`.
 - Local test builds signed with the owner's Apple Development identity keep the macOS "removable volume" permission between builds; ad-hoc builds ask again each time.
+- `EditPlan` records `partPath`/`clipCount`, and the app only uses `AppState.activePlan` (a plan that `matches` the current analysis). Shot camera indices point into one specific analysis; pairing a plan with another excerpt crashed 2.0.0 (index out of range in PlanSummary).
+- The owner's installed copy is `/Applications/Multicam Studio.app` (signed with the Apple Development identity). The 1.x app was renamed to `/Applications/Multicam Studio 1.x.app`.
 
 ### New requirements from upstream
 If upstream adds a Python dependency, it goes in `requirements.txt` (the Docker image installs from it). Check that it installs on `python:3.12-slim` without extra system packages; if it needs any, add `apt-get` lines to the Dockerfile.

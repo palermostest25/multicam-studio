@@ -1,5 +1,12 @@
 # Changes
 
+## 2.1.0
+
+- Fixed a crash when switching between audio excerpts while the preview plays (2.0.0 could pair one excerpt's plan with another's cameras).
+- Social clips export at several lengths in one go (default 15, 30 and 60 s), each in its own folder beside the full edit.
+- Clip framing option: **Smart** (default; shows wide shots whole over a blurred background in vertical clips and crops only near-matching shapes), Fit, Crop, or Same as the full edit. Clips keep their quick, on-the-beat cuts.
+- NVIDIA GPU support for the web app and Docker image: NVENC encoding and CUDA decoding are detected and used automatically (`hardware.py`). New `docker-compose.nvidia.yml`.
+
 ## 2.0.0
 
 - **Native macOS app** in Swift/SwiftUI with an AVFoundation engine: live preview of the edit straight from the original files, GPU framing and colour, VideoToolbox hardware encoding. A 4.4 MB app with no Python, FFmpeg or browser. About 2× real time at 4K and 4.7× at 1080p, versus about 0.07× for 1.x at 4K.

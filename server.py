@@ -48,7 +48,7 @@ else:
     import fcntl
 
 APP = Path(__file__).resolve().parent
-VERSION = '2.0.0'
+VERSION = '2.1.0'
 APP_ID = 'com.multicamstudio.desktop'
 DISCONNECTS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)
 _RUNNING_SERVER = None
@@ -221,7 +221,8 @@ def validate_config(raw):
                                   ('aspect',aspects,'16:9'),('codec',{'h264','hevc','prores'},'h264'),
                                   ('container',{'mp4','mov'},'mp4'),('encoder',{'auto','hardware','software'},'auto'),
                                   ('planner',{'smart','classic'},'smart'),('vision',{'auto','on','off'},'auto'),
-                                  ('clip_mode',{'best','sequence'},'best'),('clip_aspect',aspects,'9:16')]:
+                                  ('clip_mode',{'best','sequence'},'best'),('clip_aspect',aspects,'9:16'),
+                                  ('clip_framing',{'smart','fit','crop','same'},'smart')]:
         c[key] = c.get(key,default)
         if c[key] not in choices:
             raise ValueError(f'Invalid {key.replace("_"," ")}.')
@@ -229,8 +230,19 @@ def validate_config(raw):
     for key,default in [('resolution',1080),('clip_resolution',1080)]:
         c[key]=finite(c.get(key,default),key,720,2160,True)
         if c[key] not in (720,1080,1440,2160):raise ValueError('Choose 720p, 1080p, 1440p or 4K.')
-    c['clips']=finite(c.get('clips') or 0,'Clip length',0,600)
-    if 0<c['clips']<3:raise ValueError('Short clips must be at least 3 seconds long.')
+    # Several social clip lengths at once: clip_lengths [15,30,60], or clips as a number/"15,30".
+    # 'clips' switches social clips on (0 = off, as in projects saved by the Mac app);
+    # 'clip_lengths' (or a "15,30,60" string in 'clips') gives every length to export.
+    raw=c.get('clips') or 0
+    if isinstance(raw,str):raw=[x for x in raw.replace(' ','').split(',') if x]
+    raw=raw if isinstance(raw,list) else [raw]
+    enabled=any(finite(x,'Clip length',0,600)>0 for x in raw)
+    raw_lengths=(c.get('clip_lengths') or raw) if enabled else []
+    if not isinstance(raw_lengths,list):raise ValueError('Clip lengths must be a list of seconds.')
+    lengths=sorted({finite(x,'Clip length',0,600) for x in raw_lengths})
+    if len(lengths)>8:raise ValueError('Choose up to 8 clip lengths.')
+    if any(x<3 for x in lengths):raise ValueError('Short clips must be at least 3 seconds long.')
+    c['clip_lengths']=lengths;c['clips']=lengths[0] if lengths else 0
     c['clip_count']=finite(c.get('clip_count',5),'Clip count',0,500,True)
     c['clip_fade']=finite(c.get('clip_fade',0),'Clip fade',0,5)
     c['jobs']=finite(c.get('jobs',0),'Parallel shots',0,16,True)
@@ -331,7 +343,8 @@ def command_for(c, report):
                 'codec','container','encoder','planner','vision','jobs'):
         if key in c:cmd += ['--'+key.replace('_','-'),str(c[key])]
     if c.get('clips'):
-        cmd += ['--clips',str(c['clips']),'--clip-count',str(c['clip_count']),'--clip-mode',c['clip_mode'],
+        cmd += ['--clips',','.join(f'{x:g}' for x in c.get('clip_lengths') or [c['clips']]),'--clip-framing',c.get('clip_framing','smart'),
+                '--clip-count',str(c['clip_count']),'--clip-mode',c['clip_mode'],
                 '--clip-aspect',c['clip_aspect'],'--clip-resolution',str(c['clip_resolution']),'--clip-fade',str(c['clip_fade'])]
         if c.get('clips_only'):cmd.append('--clips-only')
     if c.get('cache_dir'):cmd += ['--cache-dir',c['cache_dir']]
@@ -584,7 +597,15 @@ class Studio:
                 'default_folder':str(self.default_folder),'default_output':str(self.default_output),
                 'dependencies':dependencies,'can_render':all(dependencies.values()),
                 'platform':platform.system(),'architecture':platform.machine(),
-                'server_mode':self.remote}
+                'server_mode':self.remote,'hardware':self.hardware()}
+
+    def hardware(self):
+        try:
+            import hardware
+            info=hardware.detect()
+            return {'name':info['name'],'gpu':info['gpu'],'encoders':sorted(info['encoders']),'summary':hardware.summary()}
+        except Exception as exc:  # detection must never break the studio
+            return {'name':None,'gpu':'','encoders':[],'summary':f'Hardware check failed: {exc}'}
 
     def save_setup(self, data):
         if not isinstance(data,dict):raise ValueError('Choose your setup folders.')
@@ -666,6 +687,7 @@ class Studio:
         return {'app':'Multicam Studio','version':VERSION,'platform':platform.platform(),
                 'architecture':platform.machine(),'python':platform.python_version(),
                 'bundled_app':bool(getattr(sys,'frozen',False)),'server_mode':self.remote,'dependencies':self.dependencies(),
+                'hardware':self.hardware(),
                 'setup_completed':self.setup_completed,'job_count':len(statuses),'jobs':statuses,
                 'working_disk_free_gb':round(shutil.disk_usage(self.state).free/1e9,2)}
 

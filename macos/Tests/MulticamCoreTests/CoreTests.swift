@@ -139,6 +139,33 @@ final class FormatTests: XCTestCase {
     }
 }
 
+final class ClipOptionTests: XCTestCase {
+    func info(_ w: Double, _ h: Double) -> MediaInfo {
+        MediaInfo(url: URL(fileURLWithPath: "/x"), duration: 1, hasVideo: true, hasAudio: true, naturalSize: CGSize(width: w, height: h),
+                  orientedSize: CGSize(width: w, height: h), transform: .identity, frameRate: 30, videoStart: 0, audioStart: 0, isHDR: false)
+    }
+
+    func testSmartFramingFitsWideShotsAndCropsCloseMatches() {
+        let crop = Framing(mode: .crop, center: [0.3, 0.5], zoom: 1, auto: false)
+        XCTAssertEqual(Engine.clipFraming(crop, info: info(1920, 1080), aspect: .portrait, mode: .smart).mode, .fit)
+        XCTAssertEqual(Engine.clipFraming(crop, info: info(1080, 1920), aspect: .portrait, mode: .smart).mode, .crop)
+        XCTAssertEqual(Engine.clipFraming(crop, info: info(1920, 1080), aspect: .landscape, mode: .smart).mode, .crop)
+        XCTAssertEqual(Engine.clipFraming(Framing(mode: .fit), info: info(1920, 1080), aspect: .portrait, mode: .crop).mode, .crop)
+        XCTAssertEqual(Engine.clipFraming(crop, info: info(1920, 1080), aspect: .portrait, mode: .same), crop)
+    }
+
+    func testSocialLengthsAndPlanIdentity() {
+        var project = Project()
+        XCTAssertEqual(project.socialLengths, [])
+        project.clips = 15
+        XCTAssertEqual(project.socialLengths, [15])
+        project.clipLengths = [60, 15, 30, 15, 1]
+        XCTAssertEqual(project.socialLengths, [15, 30, 60])
+        let plan = EditPlan(shots: [], clips: [], sections: [], total: 1, fps: 30, partPath: "/a.wav", clipCount: 2)
+        XCTAssertFalse(plan.matches(nil))
+    }
+}
+
 final class SyncTests: XCTestCase {
     func testCorrelationFindsTemplate() {
         var rng = SeededRandom(seed: 9)
@@ -211,17 +238,20 @@ final class EndToEndTests: XCTestCase {
         project.audio = bounceURL.path
         project.outputDir = folder.appendingPathComponent("out").path
         project.resolution = 720; project.clipResolution = 720
-        project.clips = 7; project.clipCount = 2
+        project.clips = 7; project.clipLengths = [7, 10]; project.clipCount = 2
         let engine = Engine(cacheDirectory: folder.appendingPathComponent("cache"), log: { _ in })
         let analysis = try await engine.analyse(project: project, part: project.parts[0], vision: false)
         XCTAssertEqual(analysis.clips.count, 2)
         let syncB = try XCTUnwrap(analysis.clips.first { $0.cameraID == "B" }?.sync)
         XCTAssertEqual(syncB.offset, 3, accuracy: 0.01)
         let plan = try Engine.plan(project: project, analysis: analysis)
-        XCTAssertEqual(plan.clips.count, 2)
+        XCTAssertEqual(plan.clips.count, 4)
+        XCTAssertTrue(plan.matches(analysis))
+        XCTAssertEqual(Set(plan.clips.map(\.length)), [7, 10])
         let outputs = try await engine.render(project: project, analysis: analysis, plan: plan,
                                               folder: URL(fileURLWithPath: project.outputDir)) { _, _ in }
-        XCTAssertEqual(outputs.count, 3)
+        XCTAssertEqual(outputs.count, 5)
+        XCTAssertTrue(outputs.contains { $0.url.path.contains("_clips/10s/") })
         for output in outputs {
             let asset = AVURLAsset(url: output.url)
             let track = try await asset.loadTracks(withMediaType: .video).first!

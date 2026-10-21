@@ -2,7 +2,8 @@
 # and renders run inside the container. Mount your recordings and export folders.
 FROM python:3.12-slim
 
-# Debian's FFmpeg includes libx264, which the editor uses for H.264 output.
+# Debian's FFmpeg includes libx264 (software H.264) and NVENC/NVDEC support, which
+# is used automatically when an NVIDIA GPU is passed in (docker-compose.nvidia.yml).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
@@ -25,7 +26,8 @@ ENV PYTHONUNBUFFERED=1 \
     MULTICAM_STATE_DIR=/state \
     MULTICAM_DEFAULT_FOLDER=/media/recordings \
     MULTICAM_DEFAULT_OUTPUT=/media/exports \
-    MULTICAM_ROOTS=/media
+    MULTICAM_ROOTS=/media \
+    NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 
 EXPOSE 8765
 VOLUME ["/state"]

@@ -55,12 +55,12 @@ struct PreviewPane: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                if let plan = state.plan {
+                if let plan = state.activePlan {
                     Transport()
                     Picker("Preview", selection: $state.previewTarget) {
                         Text("Full edit · \(state.project.aspect.rawValue)").tag(PreviewTarget.full)
                         ForEach(plan.clips) { clip in
-                            Text("Clip \(clip.index) · \(Timecode.short(clip.window.start)) · \(Int((clip.window.end - clip.window.start).rounded())) s")
+                            Text("\(clip.label) · \(Timecode.short(clip.window.start))")
                                 .tag(PreviewTarget.clip(clip.index))
                         }
                     }
@@ -81,7 +81,7 @@ struct PreviewPane: View {
             .padding(.vertical, 8)
             ZStack {
                 Color.black
-                if state.plan != nil {
+                if state.activePlan != nil {
                     PlayerView(player: state.player)
                 } else if state.phase == .analysing {
                     VStack(spacing: 10) {
@@ -120,7 +120,10 @@ struct PlanSummary: View {
             }
             if detailed { Label("\(plan.shots.count) shots", systemImage: "scissors") }
             ForEach(ids, id: \.self) { id in
-                let frames = shots.filter { analysis?.clips[$0.camera!].cameraID == id }.map { $0.end - $0.start }.reduce(0, +)
+                let frames = shots.filter { shot in
+                    guard let clips = analysis?.clips, let c = shot.camera, clips.indices.contains(c) else { return false }
+                    return clips[c].cameraID == id
+                }.map { $0.end - $0.start }.reduce(0, +)
                 HStack(spacing: 4) {
                     Circle().fill(CameraColor.color(for: id, in: ids)).frame(width: 8, height: 8)
                     Text("\(id) \(Int((Double(frames) / Double(covered) * 100).rounded()))%")
