@@ -84,7 +84,7 @@ git merge --no-ff upstream/main            # merge commit, never rebase
   - Badges read SERVER and the Quit row is hidden. `uploadFile(file,i,n,statusEl)` takes an optional status element.
   - The Files tab (`loadLibrary`, `libraryRow`) offers Upload recordings, Download, Delete, and "Highlights →"/"Effects →" for exported videos.
   - Local mode must look and behave exactly as upstream (no Files tab, editable paths).
-- **Appearance:** `web/glass.css` (served by the `/static/` whitelist in `server.py`) is the default Glass look. Every rule is scoped to `html.glass`; the inline script in `index.html` sets that class unless `localStorage['multicam-appearance']=='classic'`, and the header's `#appearance-toggle` switches it. Classic must stay exactly the original look, so never style unscoped selectors in glass.css. New panels/surfaces should be added to its selector lists.
+- **Web look:** one look only (the Glass theme was removed in 2.1.2 by request: "i dont need glass, i just need it to look good"). `web/studio.css` loads after `app.css`; the 2.1.2 polish block at its end (wider settings column, field spacing, flex stats grid, text-only tab hover, phone header grid) overrides earlier rules, so put layout fixes there rather than adding new theme files. Keep select option labels short enough for half-width columns.
 - When upstream adds a new tab, page or output field, make it work in server mode too: uploads instead of paths, outputs to `default_output`, and results downloadable.
 
 ### Docker and deployment files (ours only)

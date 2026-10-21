@@ -70,6 +70,11 @@ final class AppState: ObservableObject {
                 .appendingPathComponent("Multicam Studio Exports").path
         }
         refreshMediaInfo()
+        // Pick up where you left off: cached sync/music/picture results make this about a second.
+        let files = project.parts.map(\.path) + project.cameras.flatMap { $0.clips.map(\.path) }
+        if hasSources, files.allSatisfy({ FileManager.default.fileExists(atPath: $0) }) {
+            Task { @MainActor in self.analyse() }
+        }
     }
 
     // MARK: derived
@@ -113,7 +118,27 @@ final class AppState: ObservableObject {
                 refreshMediaInfo()
             }
         }
-        schedulePlan()
+        // Framing and look don't change the cuts: just redraw the preview.
+        func withoutPicture(_ p: Project) -> Project {
+            var q = p
+            for i in q.cameras.indices { for j in q.cameras[i].clips.indices { q.cameras[i].clips[j].framing = Framing() } }
+            q.look = Look()
+            return q
+        }
+        if withoutPicture(old) == withoutPicture(project), plan != nil {
+            schedulePreview()
+        } else {
+            schedulePlan()
+        }
+    }
+
+    private var previewDebounce: Task<Void, Never>?
+    func schedulePreview() {
+        previewDebounce?.cancel()
+        previewDebounce = Task {
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            if !Task.isCancelled { rebuildPreview() }
+        }
     }
 
     private func saveDraft() {
@@ -412,7 +437,7 @@ final class AppState: ObservableObject {
         let time = player.currentTime()
         previewTask = Task {
             let shots: [Shot], window: Range<Int>, aspect: Aspect
-            var sources = analysis.clips
+            var sources = Engine.currentSources(analysis, project: project)
             switch target {
             case .full:
                 shots = plan.shots; window = 0..<plan.total; aspect = project.aspect
@@ -421,7 +446,7 @@ final class AppState: ObservableObject {
                 shots = clip.shots
                 window = Int((clip.window.start * Double(plan.fps)).rounded())..<Int((clip.window.end * Double(plan.fps)).rounded())
                 aspect = project.clipAspect
-                sources = Engine.clipSources(analysis.clips, aspect: aspect, mode: project.clipFraming)
+                sources = Engine.clipSources(sources, aspect: aspect, mode: project.clipFraming)
             }
             // Preview at screen size: the same compositor as the export, just fewer pixels.
             let size = aspect.size(resolution: aspect == .landscape ? 540 : 720)
