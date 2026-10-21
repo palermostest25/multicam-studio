@@ -336,8 +336,11 @@ def plan_cost(shots, cameras, fps, scores, main_camera, rhythm):
     return share_cost + quality_cost + 10 * flashes + black
 
 
-def window_scores(music, cameras, total, fps, length, scores=None):
-    """Score every bar-aligned window of about `length` seconds for a short clip."""
+def window_scores(music, cameras, total, fps, length, scores=None, ending='beat'):
+    """Score every bar-aligned window of about `length` seconds for a short clip.
+
+    ending='beat' plays through the next downbeat and lets it ring for one beat, so the
+    clip finishes on the "one"; ending='bar' stops right at the next bar line."""
     duration = total / fps
     downbeats = music.get('downbeats', []) if music and music.get('confidence', 0) >= 0.35 else []
     if len(downbeats) > 8:
@@ -357,21 +360,25 @@ def window_scores(music, cameras, total, fps, length, scores=None):
             k = beat_index.get(round(a, 3))
             if k is None:
                 k = min(range(len(beats)), key=lambda j: abs(beats[j] - a)) if beats else None
-            if k is not None and k + 4 * bars < len(beats):
-                return a, beats[k + 4 * bars]
-            return a, a + bars * bar
+            n = None if k is None else k + 4 * bars
+            b = beats[n] if n is not None and n < len(beats) else a + bars * bar
+            tail = 0.0
+            if ending == 'beat':
+                step = beats[n + 1] - beats[n] if n is not None and n + 1 < len(beats) else bar / 4
+                tail = step if abs(step - bar / 4) <= 0.3 * bar / 4 else bar / 4
+            return a, b + tail, tail
         indices = range(len(downbeats))
     else:
         bars = None
         starts = [i * 2.0 for i in range(int(max(0, duration - length) / 2) + 1)]
-        span_of = lambda i: (starts[i], starts[i] + length)
+        span_of = lambda i: (starts[i], starts[i] + length, 0.0)
         indices = range(len(starts))
     energy = music.get('bar_energy', []) if music else []
     bar_starts = music.get('bar_starts', []) if music else []
     drops = music.get('drops', []) if music else []
     result = []
     for i in indices:
-        a, b = span_of(i)
+        a, b, tail = span_of(i)
         if b > duration + 0.01:
             break
         fa, fb = round(a * fps), round(b * fps)
@@ -396,7 +403,7 @@ def window_scores(music, cameras, total, fps, length, scores=None):
             value += 0.3 * best
         phrase = bars is not None and downbeats and (i % 4 == 0)
         value += 0.1 if phrase else 0
-        result.append({'start': round(a, 3), 'end': round(b, 3), 'score': round(value, 3)})
+        result.append({'start': round(a, 3), 'end': round(b, 3), 'score': round(value, 3), 'tail': round(tail, 3)})
     return result
 
 

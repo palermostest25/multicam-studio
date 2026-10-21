@@ -60,7 +60,7 @@ public enum Renderer {
 
     /// Build a composition for frames [window) of the bounce timeline. No pixels are processed here.
     public static func prepare(shots: [Shot], clips: [SyncedClip], bounce: URL, window: Range<Int>, spec: OutputSpec,
-                               audioFade: Double = 0, declick: Double = 0) async throws -> PreparedEdit {
+                               audioFade: Double = 0, declick: Double = 0, audioFadeOut: Double = 0) async throws -> PreparedEdit {
         let composition = AVMutableComposition()
         let fps = Int32(spec.fps)
         func frameTime(_ frame: Int) -> CMTime { CMTime(value: CMTimeValue(frame - window.lowerBound), timescale: fps) }
@@ -121,7 +121,7 @@ public enum Renderer {
             let b = CMTimeMinimum(CMTime(value: CMTimeValue(window.upperBound), timescale: fps), audioRange.end)
             try track.insertTimeRange(CMTimeRange(start: a, end: b), of: audio, at: .zero)
             let length = (b - a).seconds
-            let fadeIn = max(declick, spec.look.fadeIn, audioFade), fadeOut = max(declick, spec.look.fadeOut, audioFade)
+            let fadeIn = max(declick, spec.look.fadeIn, audioFade), fadeOut = max(declick, spec.look.fadeOut, audioFade, audioFadeOut)
             if fadeIn > 0 || fadeOut > 0 {
                 let parameters = AVMutableAudioMixInputParameters(track: track)
                 if fadeIn > 0 {

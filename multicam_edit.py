@@ -128,6 +128,8 @@ MAX_DRIFT_PPM = 2000
 SYNC_TOLERANCE = 0.080  # seconds; refuse inconsistent anchor matches
 
 
+SOCIAL_FOLDER = "Social media"
+
 def run(cmd):
     result = subprocess.run([str(x) for x in cmd], capture_output=True, text=True,
                             encoding="utf-8", errors="replace")
@@ -979,7 +981,7 @@ def render_shot(n, count, s, cameras, work, args, size, video_args, decode_args,
 
 
 def render(shots, cameras, bounce, duration, work, output, args, size=None, window=None,
-           fade=0.0, label="", weight=None):
+           fade=0.0, label="", weight=None, fade_out=None):
     """Render shots (frames on the bounce timeline) and mux the bounce for that range."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
     size = size or args.size
@@ -1020,8 +1022,9 @@ def render(shots, cameras, bounce, duration, work, output, args, size=None, wind
     print(f"{label}Concatenating and adding the audio bounce …", flush=True)
     audio_filter = f"atrim=start={start_s:.9f}:duration={length:.9f},asetpts=PTS-STARTPTS"
     declick = 0.015 if window is not None else 0
-    if fade or declick:
-        f_in, f_out = max(declick, min(fade, length / 4)), max(declick, min(fade, length / 4))
+    fade_out = max(fade, fade_out or 0)
+    if fade or fade_out or declick:
+        f_in, f_out = max(declick, min(fade, length / 4)), max(declick, min(fade_out, length / 4))
         audio_filter += (f",afade=t=in:st=0:d={f_in:.3f},"
                          f"afade=t=out:st={max(0, length - f_out):.6f}:d={f_out:.3f}")
     audio_codec = (["-c:a", "pcm_s16le"] if args.codec == "prores"
@@ -1148,6 +1151,8 @@ def build_parser():
                         help="best: the most energetic moments; sequence: the whole set in order")
     parser.add_argument("--clip-aspect", choices=list(ASPECTS), default="9:16")
     parser.add_argument("--clip-resolution", type=int, choices=RESOLUTIONS, default=1080)
+    parser.add_argument("--engine", type=int, choices=[1, 2], default=2,
+                        help="1: exactly as 2.1.3 (clips stop at the bar line); 2: clips land the next downbeat")
     parser.add_argument("--clip-fade", type=float, default=0.0, help="Audio fade in/out on clips, seconds")
     parser.add_argument("--clips-only", action="store_true", help="Export only the short clips")
     parser.add_argument("--range", type=time_range, metavar="START,END",
@@ -1158,6 +1163,7 @@ def build_parser():
     parser.add_argument("--cam-a", action="append", metavar="PATH", help="Camera A file; repeat for parts")
     parser.add_argument("--cam-b", action="append", metavar="PATH", help="Camera B file; repeat for parts")
     parser.add_argument("--audio", metavar="PATH", help="Audio bounce (WAV, AIFF, FLAC, MP3, M4A); defaults to audio_bounce.wav")
+    parser.add_argument("--clips-dir", metavar="PATH", help=f"Folder for social clips; defaults to '{SOCIAL_FOLDER}' in the output folder")
     parser.add_argument("--output-dir", metavar="PATH", help="Output and scratch folder; defaults beside script")
     parser.add_argument("--output-name", metavar="BASE", help="Video filename base, optionally ending in .mp4")
     parser.add_argument("--report-json", metavar="PATH", help="JSON report path; defaults to report_MODE.json")
@@ -1335,7 +1341,9 @@ def main(argv=None):
         raise ValueError("--output-name must be a filename, 1-120 letters/digits/spaces/._-; "
                          "start with a letter/digit and do not end with a dot or space")
     output = (output_dir / f"{output_name}.{extension}").resolve()
-    clip_folder = (output_dir / f"{output_name}_clips").resolve()
+    # Social clips share one folder at the export root (one subfolder per audio part when
+    # several parts are exported), so another app can import them all at once.
+    clip_folder = (Path(args.clips_dir).expanduser() if args.clips_dir else output_dir / SOCIAL_FOLDER).resolve()
     cut_list = (output_dir / f"cut_list{suffix}.txt").resolve()
     report_path = (Path(args.report_json).expanduser().resolve() if args.report_json
                    else (output_dir / f"report_{args.mode}.json").resolve())
@@ -1448,7 +1456,8 @@ def main(argv=None):
         short = planner.Rhythm(**{**planner.SHORT_FORM.__dict__, "cut_scale": args.cut_scale, "candidates": 24})
         forced = [s for s in shots if s.reason == "manual shot override"]
         for length in args.clip_lengths:
-            windows = planner.window_scores(args.music, cameras, total, args.fps, length, scores)
+            windows = planner.window_scores(args.music, cameras, total, args.fps, length, scores,
+                                            'beat' if args.engine >= 2 else 'bar')
             chosen = planner.choose_clips(windows, args.clip_count, args.clip_mode)
             for number, w in enumerate(chosen, 1):
                 index = len(clips) + 1
@@ -1458,7 +1467,7 @@ def main(argv=None):
                 plan = overlay_forced(plan, forced, *window)
                 path = clip_folder / f"{round(length)}s" / clip_name(output_name, length, number, w["start"], extension)
                 clips.append({"index": index, "number": number, "length": length,
-                              "start": w["start"], "end": w["end"], "score": w["score"],
+                              "start": w["start"], "end": w["end"], "score": w["score"], "tail": w.get("tail", 0),
                               "duration": round(w["end"] - w["start"], 3), "path": str(path),
                               "rendered": False, "plan": plan,
                               "shots": shot_rows(plan, cameras, args.fps, duration, w["start"])})
@@ -1507,7 +1516,7 @@ def main(argv=None):
                     c.framing = clip_framing(c, args.clip_aspect, args.clip_framing, args.b_center)
                 render(clip["plan"], framed, bounce, duration, work, Path(clip["path"]), args, size=size,
                        window=(round(clip["start"] * args.fps), round(clip["end"] * args.fps)),
-                       fade=args.clip_fade, label=f"Clip {clip['index']} · ")
+                       fade=args.clip_fade, fade_out=0.6 * clip.get("tail", 0), label=f"Clip {clip['index']} · ")
                 clip["rendered"] = True
             done_seconds += weight
             write_report(report_path, shots, cameras, bounce, duration, args, drops, breakdowns,

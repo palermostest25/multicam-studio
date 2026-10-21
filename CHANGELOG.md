@@ -1,5 +1,11 @@
 # Changes
 
+## 2.2.0
+
+- **Engine 1 / Engine 2** (Mac app: Edit tab; browser: Editing rhythm). Engine 1 is frozen exactly as in 2.1.3. Engine 2 (the default) is where improvements go:
+  - Social clips land on the beat: after the whole bars, a clip plays through the next downbeat and lets it ring for one beat with a short fade, so it finishes on the "one" instead of stopping a split second before it. Lengths are a guide (a "15 s" clip is about 15½ s at 128 BPM). Engine 1 still stops at the bar line.
+- Social clips all go in one **Social media** folder at the root of the export, separate from the full edits: `Social media/part_001_<audio>/15s/…` when there are several audio excerpts, `Social media/15s/…` with one.
+
 ## 2.1.3
 
 - Mac app: the preview keeps the exact shape of the edit (or the short clip you are previewing), so there are no black bands above and below the picture; the playback controls sit above it instead of over it.

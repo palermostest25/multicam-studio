@@ -48,7 +48,7 @@ else:
     import fcntl
 
 APP = Path(__file__).resolve().parent
-VERSION = '2.1.0'
+VERSION = '2.2.0'
 APP_ID = 'com.multicamstudio.desktop'
 DISCONNECTS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)
 _RUNNING_SERVER = None
@@ -141,6 +141,7 @@ def validate_config(raw):
     if not isinstance(raw, dict):
         raise ValueError('Expected editing settings.')
     c = dict(raw)
+    c.pop('clips_dir', None)  # set only by audio_batch, never by the browser
     all_inputs = []
     cameras = c.get('cameras')
     if cameras is not None:
@@ -227,6 +228,9 @@ def validate_config(raw):
         if c[key] not in choices:
             raise ValueError(f'Invalid {key.replace("_"," ")}.')
     c['mode']='vertical' if c['aspect'] in ('9:16','4:5') else 'horizontal'
+    try:c['engine']=int(c.get('engine',2))
+    except (TypeError,ValueError):c['engine']=0
+    if c['engine'] not in (1,2):raise ValueError('Invalid engine.')
     for key,default in [('resolution',1080),('clip_resolution',1080)]:
         c[key]=finite(c.get(key,default),key,720,2160,True)
         if c[key] not in (720,1080,1440,2160):raise ValueError('Choose 720p, 1080p, 1440p or 4K.')
@@ -340,8 +344,9 @@ def command_for(c, report):
             raise ValueError('Shot overrides require a camera project.')
     cmd += ['--audio',c['audio'],'--output-dir',c['output_dir'],'--report-json',str(report)]
     for key in ('mode','main_camera','main_share','seed','fps','cut_scale','crf','preset','aspect','resolution',
-                'codec','container','encoder','planner','vision','jobs'):
+                'codec','container','encoder','planner','vision','jobs','engine'):
         if key in c:cmd += ['--'+key.replace('_','-'),str(c[key])]
+    if c.get('clips_dir'):cmd += ['--clips-dir',c['clips_dir']]
     if c.get('clips'):
         cmd += ['--clips',','.join(f'{x:g}' for x in c.get('clip_lengths') or [c['clips']]),'--clip-framing',c.get('clip_framing','smart'),
                 '--clip-count',str(c['clip_count']),'--clip-mode',c['clip_mode'],

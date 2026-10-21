@@ -437,6 +437,7 @@ final class AppState: ObservableObject {
         let time = player.currentTime()
         previewTask = Task {
             let shots: [Shot], window: Range<Int>, aspect: Aspect
+            var fadeOut = 0.0
             var sources = Engine.currentSources(analysis, project: project)
             switch target {
             case .full:
@@ -446,6 +447,7 @@ final class AppState: ObservableObject {
                 shots = clip.shots
                 window = Int((clip.window.start * Double(plan.fps)).rounded())..<Int((clip.window.end * Double(plan.fps)).rounded())
                 aspect = project.clipAspect
+                fadeOut = Engine.clipFadeOut(clip.window)
                 sources = Engine.clipSources(sources, aspect: aspect, mode: project.clipFraming)
             }
             // Preview at screen size: the same compositor as the export, just fewer pixels.
@@ -454,7 +456,7 @@ final class AppState: ObservableObject {
             do {
                 let edit = try await Renderer.prepare(shots: shots, clips: sources, bounce: URL(fileURLWithPath: analysis.part.path),
                                                       window: window, spec: spec, audioFade: target == .full ? 0 : project.clipFade,
-                                                      declick: target == .full ? 0 : 0.015)
+                                                      declick: target == .full ? 0 : 0.015, audioFadeOut: fadeOut)
                 if Task.isCancelled { return }
                 let wasPlaying = player.rate > 0
                 let item = edit.playerItem()
@@ -519,7 +521,9 @@ final class AppState: ObservableObject {
                         .write(to: folder.appendingPathComponent("\(Engine.baseName(project))_cut_list.txt"), atomically: true, encoding: .utf8)
                     let partLabel = parts.count > 1 ? "Audio \(i + 1)/\(parts.count) · " : ""
                     let base = Double(i) / Double(parts.count)
-                    let outputs = try await engine.render(project: project, analysis: analysis!, plan: plan, folder: folder) { [weak self] title, fraction in
+                    let social = Engine.socialFolder(project: project, partIndex: i + 1, partCount: parts.count, part: part)
+                    let outputs = try await engine.render(project: project, analysis: analysis!, plan: plan, folder: folder,
+                                                          clipFolder: social) { [weak self] title, fraction in
                         Task { @MainActor in
                             self?.status = "\(partLabel)\(title)"
                             self?.progress = base + fraction / Double(parts.count)
