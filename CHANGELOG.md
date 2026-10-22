@@ -1,5 +1,12 @@
 # Changes
 
+## 2.5.0
+
+- Mac app **updates itself**: it checks for a new release every few hours (or Multicam Studio ▸ Check for Updates…), then downloads, verifies and installs it and relaunches. Turn automatic checks off in Settings.
+- New looks in both apps: **Noir** and **Silver** (black and white), **Sepia**, **Super 8** (warm, grainy, vignetted) and **Faded film**; Monochrome is now called Black & white.
+- Social clips framing has a **Black bars** option next to the blurred fit.
+- **Social media alternatives** are now two black-bar copies of every clip that uses a vertical camera: `Landscape (bars on vertical shots)` in 16:9 and `Vertical (bars on wide shots)` in 9:16.
+
 ## 2.4.0
 
 - Web app (Docker, TrueNAS): a proper **sign-in page** when `MULTICAM_PASSWORD` is set, instead of the browser's password pop-up. You stay signed in for 30 days (also across container restarts), there is a **Sign out** button, changing the password signs everyone out, and five wrong passwords make that address wait a minute. The compose files now set `MULTICAM_PASSWORD` (change `change-me`).

@@ -50,7 +50,7 @@ else:
     import fcntl
 
 APP = Path(__file__).resolve().parent
-VERSION = '2.4.0'
+VERSION = '2.5.0'
 APP_ID = 'com.multicamstudio.desktop'
 DISCONNECTS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)
 _RUNNING_SERVER = None
@@ -144,7 +144,7 @@ def validate_config(raw):
         raise ValueError('Expected editing settings.')
     c = dict(raw)
     c.pop('clips_dir', None)  # set only by audio_batch, never by the browser
-    c.pop('alternatives_dir', None)
+    c.pop('alternatives_dir', None);c.pop('alternatives_part', None)
     all_inputs = []
     cameras = c.get('cameras')
     if cameras is not None:
@@ -226,7 +226,7 @@ def validate_config(raw):
                                   ('container',{'mp4','mov'},'mp4'),('encoder',{'auto','hardware','software'},'auto'),
                                   ('planner',{'smart','classic'},'smart'),('vision',{'auto','on','off'},'auto'),
                                   ('clip_mode',{'best','sequence'},'best'),('clip_aspect',aspects,'9:16'),
-                                  ('clip_framing',{'smart','fit','crop','same'},'smart')]:
+                                  ('clip_framing',{'smart','fit','bars','crop','same'},'smart')]:
         c[key] = c.get(key,default)
         if c[key] not in choices:
             raise ValueError(f'Invalid {key.replace("_"," ")}.')
@@ -353,6 +353,7 @@ def command_for(c, report):
         if key in c:cmd += ['--'+key.replace('_','-'),str(c[key])]
     if c.get('clips_dir'):cmd += ['--clips-dir',c['clips_dir']]
     if c.get('alternatives_dir'):cmd += ['--alternatives-dir',c['alternatives_dir']]
+    if c.get('alternatives_part'):cmd += ['--alternatives-part',c['alternatives_part']]
     if c.get('clips'):
         cmd += ['--clips',','.join(f'{x:g}' for x in c.get('clip_lengths') or [c['clips']]),'--clip-framing',c.get('clip_framing','smart'),
                 '--clip-count',str(c['clip_count']),'--clip-mode',c['clip_mode'],

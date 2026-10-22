@@ -213,22 +213,28 @@ class ClipExportTests(unittest.TestCase):
                 self.assertAlmostEqual(float(info['format']['duration']), clip['end'] - clip['start'], delta=0.1)
             self.assertEqual(len([v for v in report['outputs']['videos'] if not v.get('alternative')]), 4)
             # Clips that use the vertical camera C also get a 9:16 copy in Social media alternatives.
-            alternatives = [c for c in report['clips'] if c.get('alternative_path')]
+            alternatives = [c for c in report['clips'] if c.get('alternative_paths')]
             self.assertTrue(alternatives)
+            sizes = {'16:9': (1280, 720), '9:16': (720, 1280)}
             for clip in alternatives:
-                self.assertIn(f"/Social media alternatives/{round(clip['length'])}s/", clip['alternative_path'])
-                self.assertEqual(Path(clip['alternative_path']).name, Path(clip['path']).name)
-                info = engine.probe(Path(clip['alternative_path']))
-                video = next(s for s in info['streams'] if s['codec_type'] == 'video')
-                self.assertEqual((video['width'], video['height']), (720, 1280))
+                self.assertEqual(set(clip['alternative_paths']), {'16:9', '9:16'})
+                for shape, path in clip['alternative_paths'].items():
+                    self.assertIn(f"/Social media alternatives/{engine.ALTERNATIVE_SHAPES[shape]}/{round(clip['length'])}s/", path)
+                    self.assertEqual(Path(path).name, Path(clip['path']).name)
+                    info = engine.probe(Path(path))
+                    video = next(s for s in info['streams'] if s['codec_type'] == 'video')
+                    self.assertEqual((video['width'], video['height']), sizes[shape])
 
     def test_social_media_alternatives_for_clips_with_vertical_footage(self):
         base = dict(duration=100, video_start=0, format_start=0, audio_start=0, has_audio=True)
         cams = [engine.Camera(Path('a.mov'), 'A', width=1920, height=1080, framing={'mode': 'fit'}, **base),
                 engine.Camera(Path('c.mov'), 'C', width=1080, height=1920, framing={'mode': 'pad'}, **base)]
-        self.assertEqual(engine.alternative_framing(cams[0])['mode'], 'pad')
-        tall = engine.alternative_framing(cams[1])
+        self.assertEqual(engine.alternative_framing(cams[0], '9:16')['mode'], 'pad')
+        tall = engine.alternative_framing(cams[1], '9:16')
         self.assertEqual((tall['mode'], tall['zoom']), ('crop', 1))
+        self.assertEqual(engine.alternative_framing(cams[1], '16:9')['mode'], 'pad')
+        self.assertEqual(engine.alternative_framing(cams[0], '16:9')['mode'], 'crop')
+        self.assertEqual(engine.clip_framing(cams[0], '9:16', 'bars')['mode'], 'pad')
         self.assertFalse(engine.is_vertical(cams[0])); self.assertTrue(engine.is_vertical(cams[1]))
 
 

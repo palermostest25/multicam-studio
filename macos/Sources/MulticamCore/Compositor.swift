@@ -202,6 +202,18 @@ public enum Framer {
 
 /// Colour looks and fades (the browser version's Effects, applied while rendering).
 public enum Effects {
+    /// Moving film grain: random noise, shifted every frame, mixed in lightly.
+    static func grain(_ image: CIImage, size: CGSize, time: Double, amount: CGFloat) -> CIImage {
+        guard let noise = CIFilter(name: "CIRandomGenerator")?.outputImage else { return image }
+        let frame = Int(time * 24)
+        let shift = CGAffineTransform(translationX: CGFloat((frame * 7919) % 997), y: CGFloat((frame * 104729) % 991))
+        let grey = noise.transformed(by: shift).applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 1, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+            "inputBVector": CIVector(x: 1, y: 0, z: 0, w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: amount),
+        ]).cropped(to: CGRect(origin: .zero, size: size))
+        return grey.composited(over: image).applyingFilter("CIColorControls", parameters: [kCIInputBrightnessKey: -amount / 2])
+    }
+
     public static func apply(_ look: Look, to input: CIImage, size: CGSize, time: Double, total: Double) -> CIImage {
         var image = input
         func matrix(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) {
@@ -223,6 +235,20 @@ public enum Effects {
         case .mono: controls(saturation: 0)
         case .vintage: controls(brightness: 0.025, contrast: 0.94, saturation: 0.7); matrix(1.04, 1.0, 0.97)
         case .vivid: controls(contrast: 1.08, saturation: 1.22)
+        case .noir: controls(brightness: -0.02, contrast: 1.35, saturation: 0)
+        case .silver: controls(brightness: 0.03, contrast: 0.85, saturation: 0); matrix(1.0, 1.0, 1.02)
+        case .sepia:
+            controls(saturation: 0)
+            image = image.applyingFilter("CISepiaTone", parameters: [kCIInputIntensityKey: 0.85])
+        case .super8:
+            controls(brightness: 0.03, contrast: 0.88, saturation: 0.75); matrix(1.08, 1.0, 0.86)
+            image = grain(image, size: size, time: time, amount: 0.07)
+            image = image.applyingFilter("CIVignetteEffect", parameters: [
+                kCIInputCenterKey: CIVector(x: size.width / 2, y: size.height / 2),
+                kCIInputRadiusKey: hypot(size.width, size.height) / 2 * 0.9,
+                kCIInputIntensityKey: 0.9, "inputFalloff": 0.5,
+            ])
+        case .faded: controls(brightness: 0.06, contrast: 0.8, saturation: 0.8); matrix(1.02, 1.0, 0.96)
         }
         if look.brightness != 0 || look.contrast != 1 || look.saturation != 1 {
             controls(brightness: look.brightness, contrast: look.contrast, saturation: look.saturation)

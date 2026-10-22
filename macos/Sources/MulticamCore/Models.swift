@@ -148,12 +148,13 @@ public enum EngineVersion: Int, Codable, CaseIterable, Identifiable, Sendable {
 }
 
 public enum ClipFraming: String, Codable, CaseIterable, Identifiable, Sendable {
-    case smart, fit, crop, same
+    case smart, fit, bars, crop, same
     public var id: String { rawValue }
     public var title: String {
         switch self {
         case .smart: "Smart (fit wide shots, crop close matches)"
         case .fit: "Fit whole picture · blurred background"
+        case .bars: "Fit whole picture · black bars"
         case .crop: "Crop to fill the frame"
         case .same: "Same as the full edit"
         }
@@ -353,8 +354,19 @@ public struct Project: Codable, Hashable, Sendable {
 /// Optional finishing look, applied while rendering (no second encode).
 public struct Look: Codable, Hashable, Sendable {
     public enum Style: String, Codable, CaseIterable, Identifiable, Sendable {
-        case none, warm, cool, mono, vintage, vivid
+        case none, warm, cool, mono, vintage, vivid, noir, silver, sepia, super8, faded
         public var id: String { rawValue }
+        public var title: String {
+            switch self {
+            case .none: "Original"
+            case .mono: "Black & white"
+            case .noir: "Noir (hard B&W)"
+            case .silver: "Silver (soft B&W)"
+            case .super8: "Super 8"
+            case .faded: "Faded film"
+            default: rawValue.capitalized
+            }
+        }
     }
     public var style: Style = .none
     public var brightness: Double = 0     // -0.3...0.3

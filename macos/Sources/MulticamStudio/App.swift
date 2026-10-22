@@ -12,10 +12,19 @@ struct MulticamStudioApp: App {
             ContentView()
                 .environmentObject(state)
                 .frame(minWidth: 1100, minHeight: 700)
-                .onAppear { delegate.state = state }
+                .onAppear {
+                    delegate.state = state
+                    let updater = Updater.shared
+                    updater.report = { [weak state] text in state?.status = text }
+                    updater.isBusy = { [weak state] in state?.busy ?? false }
+                    updater.checkInBackground()
+                }
         }
         .windowToolbarStyle(.unified)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { Task { await Updater.shared.check(userInitiated: true) } }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("New Project") { state.newProject() }.keyboardShortcut("n")
                 Button("Open Project…") { state.open() }.keyboardShortcut("o")
@@ -76,8 +85,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
     @AppStorage(Appearance.key) private var glass = true
+    @AppStorage(Updater.automaticKey) private var checkForUpdates = true
     var body: some View {
         Form {
+            Toggle("Check for updates automatically", isOn: $checkForUpdates)
+            LabeledContent("Version \(Updater.shared.currentVersion)") {
+                Button("Check Now") { Task { await Updater.shared.check(userInitiated: true) } }
+            }
             Picker("Appearance", selection: $glass) {
                 Text("Liquid Glass").tag(true)
                 Text("Classic").tag(false)

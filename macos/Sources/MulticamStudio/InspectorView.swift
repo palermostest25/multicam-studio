@@ -285,14 +285,14 @@ struct ExportSettings: View {
                 Picker("Framing", selection: $state.project.clipFraming) {
                     ForEach(ClipFraming.allCases) { Text($0.title).tag($0) }
                 }
-                Text("Cropping wide footage to vertical often cuts the DJ off. Smart keeps the whole picture over a blurred background for wide shots, while the clips keep their quick, on-the-beat cuts.")
+                Text("Cropping wide footage to vertical often cuts the DJ off. Smart and Fit show the whole picture over a blurred copy for shots that don’t match the clip shape; Black bars shows it with bars instead. The clips keep their quick, on-the-beat cuts.")
                     .font(.caption).foregroundStyle(.secondary)
                 Text(state.project.engine == .two
                      ? "Lengths are a guide: a 15 s clip is 8 bars, then it lands the next downbeat and lets it ring for a beat (about 15½ s at 128 BPM). Engine 1 stops at the bar line instead."
                      : "Lengths are a guide: a 15 s clip is 8 bars and stops right at the next bar line (Engine 1). Engine 2 lands the next downbeat.")
                     .font(.caption).foregroundStyle(.secondary)
                 Toggle("Social media alternatives", isOn: $state.project.clipAlternatives)
-                Text("Clips that use a vertical recording are also saved in 9:16 in a Social media alternatives folder: the vertical camera fills the frame and the wide cameras are shown whole with black bars.")
+                Text("Clips that use a vertical recording are also saved twice with black bars in Social media alternatives: in 16:9 with bars beside the vertical shots, and in 9:16 with bars above and below the wide shots.")
                     .font(.caption).foregroundStyle(.secondary)
                 Picker("Choose", selection: $state.project.clipMode) {
                     ForEach(ClipMode.allCases) { Text($0.title).tag($0) }
@@ -367,7 +367,7 @@ struct LookSettings: View {
         DisclosureGroup(isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: 10) {
                 Picker("Colour", selection: $state.project.look.style) {
-                    ForEach(Look.Style.allCases) { Text($0.rawValue.capitalized).tag($0) }
+                    ForEach(Look.Style.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 LabeledSlider(title: "Brightness", value: $state.project.look.brightness, range: -0.3...0.3, format: { String(format: "%+.2f", $0) })

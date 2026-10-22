@@ -524,8 +524,7 @@ final class AppState: ObservableObject {
                     let social = Engine.socialFolder(project: project, partIndex: i + 1, partCount: parts.count, part: part)
                     let outputs = try await engine.render(project: project, analysis: analysis!, plan: plan, folder: folder,
                                                           clipFolder: social,
-                                                          alternativesFolder: Engine.socialFolder(project: project, partIndex: i + 1, partCount: parts.count,
-                                                                                                  part: part, alternatives: true)) { [weak self] title, fraction in
+                                                          alternativesFolders: Engine.alternativeFolders(project: project, partIndex: i + 1, partCount: parts.count, part: part)) { [weak self] title, fraction in
                         Task { @MainActor in
                             self?.status = "\(partLabel)\(title)"
                             self?.progress = base + fraction / Double(parts.count)
