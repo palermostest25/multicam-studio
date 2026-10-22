@@ -124,6 +124,26 @@ final class PlannerTests: XCTestCase {
     }
 }
 
+final class LookTests: XCTestCase {
+    func testEveryLookRenders() {
+        let size = CGSize(width: 64, height: 36)
+        let input = CIImage(color: CIColor(red: 0.8, green: 0.3, blue: 0.2)).cropped(to: CGRect(origin: .zero, size: size))
+        let context = CIContext()
+        for style in Look.Style.allCases {
+            var look = Look(); look.style = style
+            let output = Effects.apply(look, to: input, size: size, time: 1, total: 10)
+            XCTAssertEqual(output.extent, CGRect(origin: .zero, size: size), "\(style)")
+            var pixel = [UInt8](repeating: 0, count: 4)
+            context.render(output, toBitmap: &pixel, rowBytes: 4, bounds: CGRect(x: 32, y: 18, width: 1, height: 1),
+                           format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+            if [.mono, .noir, .silver].contains(style) {
+                XCTAssertLessThan(abs(Int(pixel[0]) - Int(pixel[2])), 12, "\(style) should be black and white")
+            }
+            XCTAssertFalse(style.title.isEmpty)
+        }
+    }
+}
+
 final class FormatTests: XCTestCase {
     func testSizes() {
         XCTAssertTrue(Aspect.landscape.size(resolution: 2160) == (3840, 2160))
@@ -288,15 +308,21 @@ final class EndToEndTests: XCTestCase {
         XCTAssertEqual(outputs.count, 5)   // no vertical recordings: no alternatives
         let out = URL(fileURLWithPath: project.outputDir)
         let alternatives = Engine.outputs(project: project, plan: plan, folder: out, vertical: [0]).filter { $0.kind == "alternative" }
-        XCTAssertEqual(alternatives.count, plan.clips.filter { $0.shots.contains { $0.camera == 0 } }.count)
+        let withVertical = plan.clips.filter { $0.shots.contains { $0.camera == 0 } }.count
+        XCTAssertEqual(alternatives.count, 2 * withVertical)
         XCTAssertFalse(alternatives.isEmpty)
-        XCTAssertTrue(alternatives.allSatisfy { $0.url.path.contains("/Social media alternatives/") })
+        XCTAssertEqual(alternatives.filter { $0.aspect == .portrait && $0.url.path.contains("/Social media alternatives/Vertical (bars on wide shots)/") }.count, withVertical)
+        XCTAssertEqual(alternatives.filter { $0.aspect == .landscape && $0.url.path.contains("/Social media alternatives/Landscape (bars on vertical shots)/") }.count, withVertical)
         var off = project; off.clipAlternatives = false
         XCTAssertTrue(Engine.outputs(project: off, plan: plan, folder: out, vertical: [0]).allSatisfy { $0.kind != "alternative" })
         var tall = analysis.clips[0]; tall.info.orientedSize = CGSize(width: 1080, height: 1920)
-        let framed = Engine.alternativeSources([tall, analysis.clips[1]])
-        XCTAssertEqual(framed[0].framing.mode, .crop); XCTAssertEqual(framed[0].framing.zoom, 1)
-        XCTAssertEqual(framed[1].framing.mode, .pad)
+        let vertical = Engine.alternativeSources([tall, analysis.clips[1]], shape: .portrait)
+        XCTAssertEqual(vertical[0].framing.mode, .crop); XCTAssertEqual(vertical[0].framing.zoom, 1)
+        XCTAssertEqual(vertical[1].framing.mode, .pad)
+        let landscape = Engine.alternativeSources([tall, analysis.clips[1]], shape: .landscape)
+        XCTAssertEqual(landscape[0].framing.mode, .pad)
+        XCTAssertEqual(landscape[1].framing.mode, .crop); XCTAssertEqual(landscape[1].framing.zoom, 1)
+        XCTAssertEqual(Engine.clipFraming(analysis.clips[1].framing, info: analysis.clips[1].info, aspect: .portrait, mode: .bars).mode, .pad)
         XCTAssertTrue(outputs.contains { $0.url.path.contains("/Social media/10s/") })
         let parts = [AudioPart(path: "/x/set one.wav"), AudioPart(path: "/x/set two.wav")]
         XCTAssertEqual(Engine.socialFolder(project: project, partIndex: 2, partCount: 2, part: parts[1]).path,

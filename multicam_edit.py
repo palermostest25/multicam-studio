@@ -130,7 +130,9 @@ SYNC_TOLERANCE = 0.080  # seconds; refuse inconsistent anchor matches
 
 SOCIAL_FOLDER = "Social media"
 ALTERNATIVES_FOLDER = "Social media alternatives"
-ALTERNATIVE_ASPECT = "9:16"
+# Black-bar copies of clips that use a vertical recording: bars beside the vertical shots in 16:9,
+# bars above and below the wide shots in 9:16. Mirrors Engine.alternativeShapes in Swift.
+ALTERNATIVE_SHAPES = {"16:9": "Landscape (bars on vertical shots)", "9:16": "Vertical (bars on wide shots)"}
 
 def run(cmd):
     result = subprocess.run([str(x) for x in cmd], capture_output=True, text=True,
@@ -1110,8 +1112,8 @@ def write_report(path, shots, cameras, bounce, duration, args, drops, breakdowns
                     "cut_list": str(cut_list), "report": str(path),
                     "videos": [{"path": clip["path"], "start": clip["start"], "end": clip["end"]}
                                for clip in clips if clip.get("rendered")]
-                              + [{"path": clip["alternative_path"], "start": clip["start"], "end": clip["end"],
-                                  "alternative": True} for clip in clips if clip.get("alternative_rendered")],
+                              + [{"path": clip["alternative_paths"][shape], "start": clip["start"], "end": clip["end"],
+                                  "alternative": shape} for clip in clips for shape in clip.get("alternatives_rendered", [])],
                     "previews": [{"angle": c.angle, "source_path": str(c.path), "path": str(p)}
                                  for c, p in zip(cameras, previews)]},
     }
@@ -1149,7 +1151,7 @@ def build_parser():
     parser.add_argument("--clips", type=clip_lengths, default=[], metavar="SECONDS[,SECONDS…]",
                         help="Also export short clips of about this length (e.g. 15 for Reels)")
     parser.add_argument("--clip-count", type=int, default=5, help="How many clips per length (0 = all that fit)")
-    parser.add_argument("--clip-framing", choices=["smart", "fit", "crop", "same"], default="smart",
+    parser.add_argument("--clip-framing", choices=["smart", "fit", "bars", "crop", "same"], default="smart",
                         help="Clip framing: smart fits wide shots over a blurred fill and crops close matches")
     parser.add_argument("--clip-mode", choices=["best", "sequence"], default="best",
                         help="best: the most energetic moments; sequence: the whole set in order")
@@ -1160,9 +1162,11 @@ def build_parser():
     parser.add_argument("--clip-fade", type=float, default=0.0, help="Audio fade in/out on clips, seconds")
     parser.add_argument("--clips-only", action="store_true", help="Export only the short clips")
     parser.add_argument("--no-clip-alternatives", dest="clip_alternatives", action="store_false",
-                        help=f"Skip the 9:16 '{ALTERNATIVES_FOLDER}' copies of clips that use a vertical recording")
+                        help=f"Skip the black-bar '{ALTERNATIVES_FOLDER}' copies of clips that use a vertical recording")
     parser.add_argument("--alternatives-dir", metavar="PATH",
                         help=f"Folder for the alternatives; defaults to '{ALTERNATIVES_FOLDER}' in the output folder")
+    parser.add_argument("--alternatives-part", metavar="NAME", default="",
+                        help="Subfolder inside each alternative shape folder (one per audio part)")
     parser.add_argument("--range", type=time_range, metavar="START,END",
                         help="Render only this part of the full edit (a quick preview)")
     parser.add_argument("--main-camera", default=None, metavar="ID",
@@ -1266,6 +1270,8 @@ def clip_framing(camera, aspect, mode, b_center=(0.5, 0.72)):
         return framing
     if mode == "fit":
         return fit
+    if mode == "bars":
+        return {**framing, "mode": "pad"}
     if mode == "crop":
         return crop
     w, h = ASPECTS[aspect]
@@ -1278,11 +1284,13 @@ def is_vertical(camera):
     return bool(camera.width and camera.height and camera.width < camera.height)
 
 
-def alternative_framing(camera, b_center=(0.5, 0.72)):
-    """Social media alternatives: a vertical recording fills the 9:16 frame at its own shape;
-    every other recording is shown whole with black bars. Mirrors Engine.alternativeSources."""
+def alternative_framing(camera, aspect, b_center=(0.5, 0.72)):
+    """Social media alternatives: a recording shaped like the copy fills it (zoom 1); every other
+    recording is shown whole with black bars. Mirrors Engine.alternativeSources."""
     framing = dict(camera.framing) if camera.framing is not None else {"mode": "crop", "center": list(b_center), "zoom": 1}
-    if is_vertical(camera):
+    w, h = ASPECTS[aspect]
+    source = camera.width / camera.height if camera.width and camera.height else 16 / 9
+    if min(w / h, source) / max(w / h, source) >= 0.55:
         return {**framing, "mode": "crop", "zoom": 1, "auto": True}
     return {**framing, "mode": "pad"}
 
@@ -1399,7 +1407,7 @@ def main(argv=None):
             and any(clip_folder.glob(f"*/{output_name}_*s_[0-9][0-9][0-9]_*")) ):
         raise FileExistsError(f"Clips already exist in {clip_folder}. Use --overwrite to replace them.")
     if (args.clips and args.clip_alternatives and not args.plan_only and not args.overwrite and alternatives_folder.is_dir()
-            and any(alternatives_folder.glob(f"*/{output_name}_*s_[0-9][0-9][0-9]_*"))):
+            and any(alternatives_folder.glob(f"**/{output_name}_*s_[0-9][0-9][0-9]_*"))):
         raise FileExistsError(f"Clips already exist in {alternatives_folder}. Use --overwrite to replace them.")
     if any(p.exists() and not p.is_file() for p in all_outputs):
         raise ValueError("An output path refers to a directory; choose a different path")
@@ -1492,11 +1500,12 @@ def main(argv=None):
                                     args.seed + index, args.main_camera, short, window=window, scores=scores)
                 plan = overlay_forced(plan, forced, *window)
                 path = clip_folder / f"{round(length)}s" / clip_name(output_name, length, number, w["start"], extension)
-                alternative = None
+                alternatives = {}
                 if args.clip_alternatives and any(s.camera is not None and is_vertical(cameras[s.camera]) for s in plan):
-                    alternative = str(alternatives_folder / f"{round(length)}s"
-                                      / clip_name(output_name, length, number, w["start"], extension))
-                clips.append({"index": index, "number": number, "length": length, "alternative_path": alternative,
+                    for shape, folder_name in ALTERNATIVE_SHAPES.items():
+                        alternatives[shape] = str(alternatives_folder / folder_name / (args.alternatives_part or "")
+                                                  / f"{round(length)}s" / clip_name(output_name, length, number, w["start"], extension))
+                clips.append({"index": index, "number": number, "length": length, "alternative_paths": alternatives,
                               "start": w["start"], "end": w["end"], "score": w["score"], "tail": w.get("tail", 0),
                               "duration": round(w["end"] - w["start"], 3), "path": str(path),
                               "rendered": False, "plan": plan,
@@ -1520,15 +1529,15 @@ def main(argv=None):
         if args.plan_only:
             print(f"Plan saved: {cut_list}\nReport: {report_path}\nRender with the same options, remove --plan-only and add --overwrite.")
             return
-        deliverables = ([] if args.clips_only else [("full", None)]) + [("clip", clip) for clip in clips]
-        deliverables += [("alternative", clip) for clip in clips if clip.get("alternative_path")]
+        deliverables = ([] if args.clips_only else [("full", None, None)]) + [("clip", clip, None) for clip in clips]
+        deliverables += [("alternative", clip, shape) for clip in clips for shape in clip["alternative_paths"]]
         full_seconds = (args.range[1] - args.range[0]) if args.range else duration
-        total_seconds = sum(full_seconds if kind == "full" else clip["duration"] for kind, clip in deliverables)
+        total_seconds = sum(full_seconds if kind == "full" else clip["duration"] for kind, clip, _ in deliverables)
         done_seconds = 0.0
-        for number, (kind, clip) in enumerate(deliverables, 1):
+        for number, (kind, clip, shape) in enumerate(deliverables, 1):
             weight = full_seconds if kind == "full" else clip["duration"]
             title = ("full edit" if kind == "full"
-                     else f"{round(clip['length'])} s {'alternative' if kind == 'alternative' else 'clip'} "
+                     else f"{round(clip['length'])} s {f'{shape} alternative' if kind == 'alternative' else 'clip'} "
                           f"{clip['number']} ({timecode(clip['start'])})")
             print(f"Deliverable {number}/{len(deliverables)} weight={weight:.3f} done={done_seconds:.3f} "
                   f"total={total_seconds:.3f}: {title}", flush=True)
@@ -1551,14 +1560,14 @@ def main(argv=None):
                        fade=args.clip_fade, fade_out=0.6 * clip.get("tail", 0), label=f"Clip {clip['index']} · ")
                 clip["rendered"] = True
             elif kind == "alternative":
-                size = output_size(frame_size(ALTERNATIVE_ASPECT, args.clip_resolution))
+                size = output_size(frame_size(shape, args.clip_resolution))
                 framed = [copy.copy(c) for c in cameras]
                 for c in framed:
-                    c.framing = alternative_framing(c, args.b_center)
-                render(clip["plan"], framed, bounce, duration, work, Path(clip["alternative_path"]), args, size=size,
+                    c.framing = alternative_framing(c, shape, args.b_center)
+                render(clip["plan"], framed, bounce, duration, work, Path(clip["alternative_paths"][shape]), args, size=size,
                        window=(round(clip["start"] * args.fps), round(clip["end"] * args.fps)),
-                       fade=args.clip_fade, fade_out=0.6 * clip.get("tail", 0), label=f"Alternative {clip['index']} · ")
-                clip["alternative_rendered"] = True
+                       fade=args.clip_fade, fade_out=0.6 * clip.get("tail", 0), label=f"Alternative {shape} {clip['index']} · ")
+                clip.setdefault("alternatives_rendered", []).append(shape)
             done_seconds += weight
             write_report(report_path, shots, cameras, bounce, duration, args, drops, breakdowns,
                          output, cut_list, previews, "rendering" if number < len(deliverables) else "rendered", clips)
