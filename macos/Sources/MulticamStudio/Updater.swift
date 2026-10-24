@@ -201,7 +201,9 @@ final class Updater: ObservableObject {
             return (dict[kSecCodeInfoTeamIdentifier as String] as? String, dict[kSecCodeInfoIdentifier as String] as? String)
         }
         let new = try info(candidate), old = try info(current)
-        guard new.identifier == old.identifier, new.team == old.team else {
+        // An ad-hoc signed app (no team) may move to any validly signed build of the same app;
+        // a team-signed app only accepts the same team.
+        guard new.identifier == old.identifier, old.team == nil || new.team == old.team else {
             throw MulticamUpdateError("The update is signed by a different developer, so it wasn’t installed.")
         }
     }
