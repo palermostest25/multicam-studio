@@ -1,5 +1,9 @@
 # Changes
 
+## 2.6.1
+
+- Mac app: the Look colour choice is a menu again; with the new looks the row of buttons was wider than the panel and pushed the whole Export tab over the preview.
+
 ## 2.6.0
 
 - **No social clips here**: drag across the timeline (Mac) or select in the waveform (browser) and choose “No social clips here”, and social clips will never be taken from that stretch. Each audio excerpt keeps its own list (Mac: Export tab; browser: Social clips panel). The full edit is unaffected.

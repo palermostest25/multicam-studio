@@ -380,7 +380,7 @@ struct LookSettings: View {
                 Picker("Colour", selection: $state.project.look.style) {
                     ForEach(Look.Style.allCases) { Text($0.title).tag($0) }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
                 LabeledSlider(title: "Brightness", value: $state.project.look.brightness, range: -0.3...0.3, format: { String(format: "%+.2f", $0) })
                 LabeledSlider(title: "Contrast", value: $state.project.look.contrast, range: 0.5...2, format: { String(format: "%.2f", $0) })
                 LabeledSlider(title: "Saturation", value: $state.project.look.saturation, range: 0...2, format: { String(format: "%.2f", $0) })
