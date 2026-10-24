@@ -9,7 +9,7 @@ New controls in the browser version:
 - **Framing & format**: four output shapes (16:9 YouTube, 9:16 Reels/Shorts/TikTok, 1:1, 4:5 Instagram feed). Per recording: *Crop to fill the frame* (optionally **Follow the action**, which centres the crop on where the movement is), *Fit whole picture · blurred background* (no black bars), or *Fit whole picture · black bars*.
 - **Editing rhythm**: *Cutting style* **Smart** (default) cuts on bar lines, recognises breakdowns, builds and drops, and avoids poor camera pictures. **Classic** is the 1.x seeded planner. *Camera picture analysis* is automatic with hardware decoding (Mac) and can be forced on or off.
 - **Output**: full-edit size (4K/1440p/1080p/720p), video format (H.264, HEVC, ProRes), encoder (automatic, hardware, software) and how many shots render at once. In Docker, **Folder inside Exports** chooses where the videos go.
-- **Social clips**: length in seconds (snapped to whole bars), how many (0 = as many as fit), best moments or the whole set in order, shape, size, audio fade, and *Clips only*. Clips are saved in `<name>_clips` beside the full edit, named with their start time, and listed with download links in the results.
+- **Social clips**: length in seconds (snapped to whole bars), how many (0 = as many as fit), best moments or the whole set in order, shape, size, audio fade, and *Clips only*. Clips are saved in `Social media/<set>/<length>s/`, named with their length, number and start time, and listed with download links in the results. Full edits go in `Full sets/`, cut lists and reports in `Project files/<set>/`. *Filters* (auto by default) gives about a third of the clips a black and white look and the rest varied colour looks.
 
 New engine options (`multicam_edit.py --help`):
 

@@ -210,13 +210,14 @@ class ClipExportTests(unittest.TestCase):
                 engine.main(['--project', str(project), '--audio', str(root / 'set.wav'), '--output-dir', str(root / 'out'),
                              '--resolution', '720', '--clips', '7,5', '--clip-count', '2', '--clip-resolution', '720',
                              '--clips-only', '--no-drift', '--preset', 'ultrafast', '--encoder', 'software', '--vision', 'off'])
-            report = json.loads((root / 'out' / 'report_horizontal.json').read_text(encoding='utf-8'))
+            report = json.loads((root / 'out' / 'Project files' / 'set' / 'Report.json').read_text(encoding='utf-8'))
             self.assertEqual(report['status'], 'rendered')
             self.assertIsNone(report['outputs']['video'])
             self.assertEqual(len(report['clips']), 4)
             self.assertEqual(sorted({c['length'] for c in report['clips']}), [5, 7])
             for clip in report['clips']:
-                self.assertIn(f"/Social media/{round(clip['length'])}s/", clip['path'])
+                self.assertIn(f"/Social media/set/{round(clip['length'])}s/set - {round(clip['length'])}s - ", clip['path'])
+                self.assertIn(clip['look'], engine.looks.STYLES)
                 info = engine.probe(Path(clip['path']))
                 video = next(s for s in info['streams'] if s['codec_type'] == 'video')
                 self.assertEqual((video['width'], video['height']), (720, 1280))
@@ -229,11 +230,24 @@ class ClipExportTests(unittest.TestCase):
             for clip in alternatives:
                 self.assertEqual(set(clip['alternative_paths']), {'16:9', '9:16'})
                 for shape, path in clip['alternative_paths'].items():
-                    self.assertIn(f"/Social media alternatives/{engine.ALTERNATIVE_SHAPES[shape]}/{round(clip['length'])}s/", path)
+                    self.assertIn(f"/Social media alternatives/{engine.ALTERNATIVE_SHAPES[shape]}/set/{round(clip['length'])}s/", path)
                     self.assertEqual(Path(path).name, Path(clip['path']).name)
                     info = engine.probe(Path(path))
                     video = next(s for s in info['streams'] if s['codec_type'] == 'video')
                     self.assertEqual((video['width'], video['height']), sizes[shape])
+
+    def test_auto_clip_looks_mix_black_and_white(self):
+        import looks
+        clips = [{'start': i * 30, 'score': s} for i, s in enumerate([2.0, 0.4, 1.5, 0.2, 1.8, 1.1])]
+        auto = looks.assign_clip_looks(clips, 'auto', seed=3)
+        self.assertEqual(sum(l in looks.GREYSCALE for l in auto), 2)       # a third, the calmest two
+        self.assertIn(auto[3], looks.GREYSCALE); self.assertIn(auto[1], looks.GREYSCALE)
+        self.assertTrue(all(l in looks.COLOUR_MIX for i, l in enumerate(auto) if i not in (1, 3)))
+        self.assertEqual(auto, looks.assign_clip_looks(clips, 'auto', seed=3))  # deterministic
+        self.assertEqual(looks.assign_clip_looks(clips, 'off'), ['none'] * 6)
+        self.assertEqual(looks.assign_clip_looks(clips, 'sepia'), ['sepia'] * 6)
+        self.assertEqual(engine.clip_name('26-09-26-1', 15, 3, 3725.4, 'mp4'), '26-09-26-1 - 15s - 03 - 1h02m05s.mp4')
+        self.assertEqual(engine.readable_name('26/09: set*1'), '26 09 set 1')
 
     def test_social_media_alternatives_for_clips_with_vertical_footage(self):
         base = dict(duration=100, video_start=0, format_start=0, audio_start=0, has_audio=True)

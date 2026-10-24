@@ -116,6 +116,7 @@ except ImportError:
     sys.exit("Install dependencies: python3 -m pip install numpy scipy")
 
 import hardware
+import looks
 import music
 import planner
 import vision
@@ -128,6 +129,8 @@ MAX_DRIFT_PPM = 2000
 SYNC_TOLERANCE = 0.080  # seconds; refuse inconsistent anchor matches
 
 
+FULL_FOLDER = "Full sets"
+FILES_FOLDER = "Project files"
 SOCIAL_FOLDER = "Social media"
 ALTERNATIVES_FOLDER = "Social media alternatives"
 # Black-bar copies of clips that use a vertical recording: bars beside the vertical shots in 16:9,
@@ -934,7 +937,7 @@ def default_jobs(hardware):
     return 3 if hardware else max(1, min(4, cores // 4))
 
 
-def render_shot(n, count, s, cameras, work, args, size, video_args, decode_args, extension):
+def render_shot(n, count, s, cameras, work, args, size, video_args, decode_args, extension, look=()):
     width, height = size
     frames = s.end - s.start
     length = frames / args.fps
@@ -965,6 +968,8 @@ def render_shot(n, count, s, cameras, work, args, size, video_args, decode_args,
                    f"setpts=(PTS-({source_start+c.video_start:.9f})/TB)*{c.rate:.12f},"
                    f"fps={args.fps}:start_time=0:round=near,"
                    + camera_filter(c, args, size))
+        if look:
+            filters += "," + ",".join(look)
     # A final subframe/decoder boundary may need one repeated frame, never a long hold.
     pixel = "yuv422p10le" if args.codec == "prores" else "yuv420p"
     filters += (f",tpad=stop_mode=clone:stop_duration={2/args.fps:.9f},"
@@ -985,7 +990,7 @@ def render_shot(n, count, s, cameras, work, args, size, video_args, decode_args,
 
 
 def render(shots, cameras, bounce, duration, work, output, args, size=None, window=None,
-           fade=0.0, label="", weight=None, fade_out=None):
+           fade=0.0, label="", weight=None, fade_out=None, look="none"):
     """Render shots (frames on the bounce timeline) and mux the bounce for that range."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
     size = size or args.size
@@ -997,7 +1002,8 @@ def render(shots, cameras, bounce, duration, work, output, args, size=None, wind
     video_args, hardware = encoder_args(args, width, height)
     decode_args = hardware_decode_args(args) if hardware else []
     extension = container_for(args)
-    folder = work / f"segments_{output.stem}"
+    # One scratch folder per output: clips and their alternatives share file names.
+    folder = work / f"segments_{hashlib.sha1(str(output).encode('utf-8')).hexdigest()[:12]}"
     folder.mkdir(parents=True, exist_ok=True)
     jobs = args.jobs or default_jobs(hardware)
     print(f"Encoding {width}x{height} {args.codec.upper()} with "
@@ -1006,8 +1012,9 @@ def render(shots, cameras, bounce, duration, work, output, args, size=None, wind
     done = 0
     pool = ThreadPoolExecutor(max_workers=jobs)
     try:
+        shot_look = looks.look_filters(look)
         futures = {pool.submit(render_shot, n, len(shots), s, cameras, folder, args, size,
-                               video_args, decode_args, extension): n
+                               video_args, decode_args, extension, shot_look): n
                    for n, s in enumerate(shots, 1)}
         for future in as_completed(futures):
             n = futures[future]
@@ -1163,10 +1170,8 @@ def build_parser():
     parser.add_argument("--clips-only", action="store_true", help="Export only the short clips")
     parser.add_argument("--no-clip-alternatives", dest="clip_alternatives", action="store_false",
                         help=f"Skip the black-bar '{ALTERNATIVES_FOLDER}' copies of clips that use a vertical recording")
-    parser.add_argument("--alternatives-dir", metavar="PATH",
-                        help=f"Folder for the alternatives; defaults to '{ALTERNATIVES_FOLDER}' in the output folder")
-    parser.add_argument("--alternatives-part", metavar="NAME", default="",
-                        help="Subfolder inside each alternative shape folder (one per audio part)")
+    parser.add_argument("--clip-filters", choices=["off", "auto", *looks.STYLES], default="auto",
+                        help="Looks for social clips: auto mixes black and white with colour looks")
     parser.add_argument("--range", type=time_range, metavar="START,END",
                         help="Render only this part of the full edit (a quick preview)")
     parser.add_argument("--main-camera", default=None, metavar="ID",
@@ -1175,7 +1180,6 @@ def build_parser():
     parser.add_argument("--cam-a", action="append", metavar="PATH", help="Camera A file; repeat for parts")
     parser.add_argument("--cam-b", action="append", metavar="PATH", help="Camera B file; repeat for parts")
     parser.add_argument("--audio", metavar="PATH", help="Audio bounce (WAV, AIFF, FLAC, MP3, M4A); defaults to audio_bounce.wav")
-    parser.add_argument("--clips-dir", metavar="PATH", help=f"Folder for social clips; defaults to '{SOCIAL_FOLDER}' in the output folder")
     parser.add_argument("--output-dir", metavar="PATH", help="Output and scratch folder; defaults beside script")
     parser.add_argument("--output-name", metavar="BASE", help="Video filename base, optionally ending in .mp4")
     parser.add_argument("--report-json", metavar="PATH", help="JSON report path; defaults to report_MODE.json")
@@ -1253,10 +1257,21 @@ def clip_lengths(text):
     return values
 
 
+def readable_name(text, fallback="Set"):
+    """A tidy file/folder name: letters, digits, spaces and ._- only."""
+    name = re.sub(r"\s+", " ", re.sub(r"[^A-Za-z0-9 ._-]+", " ", str(text))).strip(" .")[:100].rstrip(" .")
+    return name if name and name[0].isalnum() else fallback
+
+
+def clip_stamp(seconds):
+    whole = int(seconds)
+    h, m, s = whole // 3600, whole // 60 % 60, whole % 60
+    return f"{h}h{m:02d}m{s:02d}s" if h else f"{m}m{s:02d}s"
+
+
 def clip_name(base, length, number, start, extension):
-    whole = int(start)
-    return (f"{base}_{round(length):02d}s_{number:03d}_"
-            f"{whole//3600:02d}-{whole//60 % 60:02d}-{whole % 60:02d}.{extension}")
+    """'<set> - 15s - 01 - 3m39s.mp4': sorts by length, then number, and says where it starts."""
+    return f"{base} - {round(length)}s - {number:02d} - {clip_stamp(start)}.{extension}"
 
 
 def clip_framing(camera, aspect, mode, b_center=(0.5, 0.72)):
@@ -1365,21 +1380,24 @@ def main(argv=None):
     output_dir = Path(args.output_dir).expanduser().resolve() if args.output_dir else folder
     suffix = "_vertical" if args.mode == "vertical" else ""
     extension = container_for(args)
-    output_name = args.output_name or f"multicam_cut{suffix}"
+    output_name = args.output_name or readable_name(bounce.stem) + (" vertical" if suffix else "")
     if output_name.lower().endswith((".mp4", ".mov")):
         output_name = output_name[:-4]
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,119}", output_name) or output_name.endswith((" ", ".")):
         raise ValueError("--output-name must be a filename, 1-120 letters/digits/spaces/._-; "
                          "start with a letter/digit and do not end with a dot or space")
-    output = (output_dir / f"{output_name}.{extension}").resolve()
-    # Social clips share one folder at the export root (one subfolder per audio part when
-    # several parts are exported), so another app can import them all at once.
-    clip_folder = (Path(args.clips_dir).expanduser() if args.clips_dir else output_dir / SOCIAL_FOLDER).resolve()
-    alternatives_folder = (Path(args.alternatives_dir).expanduser() if args.alternatives_dir
-                           else output_dir / ALTERNATIVES_FOLDER).resolve()
-    cut_list = (output_dir / f"cut_list{suffix}.txt").resolve()
+    # Export layout (the output folder is the export root, shared by every audio part):
+    #   Full sets/<set>.mp4
+    #   Social media/<set>/<L>s/<set> - <L>s - 01 - 3m39s.mp4
+    #   Social media alternatives/<shape>/<set>/<L>s/…
+    #   Project files/<set>/Cut list.txt, Report.json, previews
+    output = (output_dir / FULL_FOLDER / f"{output_name}.{extension}").resolve()
+    files_folder = (output_dir / FILES_FOLDER / output_name).resolve()
+    clip_folder = (output_dir / SOCIAL_FOLDER / output_name).resolve()
+    alternatives_folder = (output_dir / ALTERNATIVES_FOLDER).resolve()
+    cut_list = files_folder / "Cut list.txt"
     report_path = (Path(args.report_json).expanduser().resolve() if args.report_json
-                   else (output_dir / f"report_{args.mode}.json").resolve())
+                   else files_folder / "Report.json")
     # Preview every source in both modes, so source identity is visible in the UI.
     preview_inputs = inputs
     stems = [p.stem.casefold() for p in preview_inputs]
@@ -1387,8 +1405,8 @@ def main(argv=None):
                          for index, clip in enumerate(camera["clips"])] if definitions else [""]*len(inputs))
     if not definitions and len({p.name for p in inputs}) != len(inputs):
         preview_prefixes = [f"source_{index+1}_" for index in range(len(inputs))]
-    previews = [(output_dir / (prefix+p.stem + ("_"+p.suffix[1:] if stems.count(p.stem.casefold()) > 1 else "")
-                              + suffix + "_crop_preview.jpg")).resolve()
+    previews = [(files_folder / ("Preview - " + (prefix.strip("_").replace("_", " ") + " - " if prefix else "") + p.stem
+                                 + (" " + p.suffix[1:] if stems.count(p.stem.casefold()) > 1 else "") + ".jpg")).resolve()
                 for p, prefix in zip(preview_inputs, preview_prefixes)]
     all_outputs = [output, cut_list, report_path] + previews
     if len(set(str(p).casefold() for p in all_outputs)) != len(all_outputs):
@@ -1406,10 +1424,10 @@ def main(argv=None):
         existing = next(p for p in protected if p.exists())
         raise FileExistsError(f"Output already exists: {existing}. Use --overwrite to replace it.")
     if (args.clips and not args.plan_only and not args.overwrite and clip_folder.is_dir()
-            and any(clip_folder.glob(f"*/{output_name}_*s_[0-9][0-9][0-9]_*")) ):
+            and any(clip_folder.glob(f"*/{output_name} - *s - [0-9][0-9] - *")) ):
         raise FileExistsError(f"Clips already exist in {clip_folder}. Use --overwrite to replace them.")
     if (args.clips and args.clip_alternatives and not args.plan_only and not args.overwrite and alternatives_folder.is_dir()
-            and any(alternatives_folder.glob(f"**/{output_name}_*s_[0-9][0-9][0-9]_*"))):
+            and any(alternatives_folder.glob(f"*/{output_name}/*/{output_name} - *s - [0-9][0-9] - *"))):
         raise FileExistsError(f"Clips already exist in {alternatives_folder}. Use --overwrite to replace them.")
     if any(p.exists() and not p.is_file() for p in all_outputs):
         raise ValueError("An output path refers to a directory; choose a different path")
@@ -1432,8 +1450,9 @@ def main(argv=None):
     else:
         cameras = [read_camera(p, "A") for p in a_inputs] + [read_camera(p, "B") for p in b_inputs]
     output_dir.mkdir(parents=True, exist_ok=True)
+    files_folder.mkdir(parents=True, exist_ok=True)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_dir = Path(args.cache_dir).expanduser().resolve() if args.cache_dir else output_dir / ".multicam_cache"
+    cache_dir = Path(args.cache_dir).expanduser().resolve() if args.cache_dir else output_dir / FILES_FOLDER / ".cache"
     # Scratch beside output enables atomic final replacement on the same disk.
     # Windows cancels with Ctrl+Break; handle it like Ctrl+C so scratch files are removed.
     if hasattr(os_signal, "SIGBREAK"):
@@ -1505,13 +1524,15 @@ def main(argv=None):
                 alternatives = {}
                 if args.clip_alternatives and any(s.camera is not None and is_vertical(cameras[s.camera]) for s in plan):
                     for shape, folder_name in ALTERNATIVE_SHAPES.items():
-                        alternatives[shape] = str(alternatives_folder / folder_name / (args.alternatives_part or "")
+                        alternatives[shape] = str(alternatives_folder / folder_name / output_name
                                                   / f"{round(length)}s" / clip_name(output_name, length, number, w["start"], extension))
                 clips.append({"index": index, "number": number, "length": length, "alternative_paths": alternatives,
                               "start": w["start"], "end": w["end"], "score": w["score"], "tail": w.get("tail", 0),
                               "duration": round(w["end"] - w["start"], 3), "path": str(path),
                               "rendered": False, "plan": plan,
                               "shots": shot_rows(plan, cameras, args.fps, duration, w["start"])})
+        for clip, look in zip(clips, looks.assign_clip_looks(clips, args.clip_filters, args.seed)):
+            clip["look"] = look
         if clips:
             print(f"Planned {len(clips)} clip(s) at " + ", ".join(f"{v:g}s" for v in args.clip_lengths)
                   + f" ({args.clip_aspect}, {'best moments' if args.clip_mode == 'best' else 'in sequence'}, "
@@ -1559,7 +1580,8 @@ def main(argv=None):
                     c.framing = clip_framing(c, args.clip_aspect, args.clip_framing, args.b_center)
                 render(clip["plan"], framed, bounce, duration, work, Path(clip["path"]), args, size=size,
                        window=(round(clip["start"] * args.fps), round(clip["end"] * args.fps)),
-                       fade=args.clip_fade, fade_out=0.6 * clip.get("tail", 0), label=f"Clip {clip['index']} · ")
+                       fade=args.clip_fade, fade_out=0.6 * clip.get("tail", 0), label=f"Clip {clip['index']} · ",
+                       look=clip.get("look", "none"))
                 clip["rendered"] = True
             elif kind == "alternative":
                 size = output_size(frame_size(shape, args.clip_resolution))
@@ -1568,7 +1590,8 @@ def main(argv=None):
                     c.framing = alternative_framing(c, shape, args.b_center)
                 render(clip["plan"], framed, bounce, duration, work, Path(clip["alternative_paths"][shape]), args, size=size,
                        window=(round(clip["start"] * args.fps), round(clip["end"] * args.fps)),
-                       fade=args.clip_fade, fade_out=0.6 * clip.get("tail", 0), label=f"Alternative {shape} {clip['index']} · ")
+                       fade=args.clip_fade, fade_out=0.6 * clip.get("tail", 0), label=f"Alternative {shape} {clip['index']} · ",
+                       look=clip.get("look", "none"))
                 clip.setdefault("alternatives_rendered", []).append(shape)
             done_seconds += weight
             write_report(report_path, shots, cameras, bounce, duration, args, drops, breakdowns,

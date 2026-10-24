@@ -106,7 +106,7 @@ class AudioExcerptTests(unittest.TestCase):
         with patch.object(engine,'output_size',return_value=(160,90)), contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(RuntimeError,'One or more audio excerpts failed'):
                 audio_batch.run_batch(config)
-        manifest=json.loads((Path(self.out.name)/'set_audio_parts.json').read_text())
+        manifest=json.loads((Path(self.out.name)/'Project files'/'set - audio parts.json').read_text())
         self.assertEqual(manifest['status'],'failed')
         self.assertEqual(manifest['completed_count'],2)
         self.assertEqual(manifest['parts'][1]['status'],'failed')
@@ -122,7 +122,7 @@ class AudioExcerptTests(unittest.TestCase):
             return real_main(argv)
         with patch.object(engine,'output_size',return_value=(160,90)), patch.object(engine,'main',side_effect=main), contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(KeyboardInterrupt):audio_batch.run_batch(self.config)
-        manifest=json.loads((Path(self.out.name)/'set_audio_parts.json').read_text())
+        manifest=json.loads((Path(self.out.name)/'Project files'/'set - audio parts.json').read_text())
         self.assertEqual(manifest['status'],'cancelled')
         self.assertEqual(manifest['completed_count'],1)
         self.assertTrue(Path(manifest['outputs']['videos'][0]['path']).is_file())
@@ -131,12 +131,14 @@ class AudioExcerptTests(unittest.TestCase):
     def test_preflight_isolates_sibling_outputs_and_part_timing(self):
         raw={**self.config,'audio_parts':[{**self.parts[0],'overrides':[{'path':str(self.root/'A.MOV'),'offset':-2}]},self.parts[1],self.parts[2]]}
         config=audio_batch.validate_config(raw)
-        self.assertTrue(all(Path(c['output_dir']).parent==Path(self.out.name).resolve() for c in config['part_configs']))
+        # One shared export root; each excerpt gets its own set name.
+        self.assertTrue(all(Path(c['output_dir'])==Path(self.out.name).resolve() for c in config['part_configs']))
+        self.assertEqual([c['output_name'] for c in config['part_configs']],['set - Part 1','set - Part 2','set - Part 3'])
         self.assertEqual(config['part_configs'][0]['overrides'][0]['offset'],-2)
         self.assertEqual(config['part_configs'][1]['overrides'],[])
-        target=Path(config['part_configs'][2]['output_dir']);target.mkdir();(target/'keep.txt').write_text('keep')
+        target=Path(self.out.name)/'Project files'/config['part_configs'][2]['output_name'];target.mkdir(parents=True);(target/'keep.txt').write_text('keep')
         with self.assertRaisesRegex(ValueError,'already exists'):
             audio_batch.validate_config(raw)
-        self.assertFalse(Path(config['part_configs'][0]['output_dir']).exists())
+        self.assertFalse((Path(self.out.name)/'Project files'/config['part_configs'][0]['output_name']).exists())
 
 if __name__=='__main__':unittest.main()

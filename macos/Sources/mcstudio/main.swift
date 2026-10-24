@@ -57,10 +57,11 @@ func run() async throws {
             let analysis = try await engine.analyse(project: project, part: part, vision: vision)
             print(String(format: "Analysis took %.1f s", Date().timeIntervalSince(started)))
             var plan = try Engine.plan(project: project, analysis: analysis)
-            let folder = Engine.outputFolder(project: project, partIndex: index + 1, partCount: parts.count, part: part)
+            let paths = Engine.exportPaths(project: project, partIndex: index + 1, partCount: parts.count, part: part)
+            let folder = paths.files
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let list = Engine.cutList(project: project, analysis: analysis, plan: plan)
-            try list.write(to: folder.appendingPathComponent("cut_list.txt"), atomically: true, encoding: .utf8)
+            try list.write(to: folder.appendingPathComponent("Cut list.txt"), atomically: true, encoding: .utf8)
             let durations = plan.shots.filter { $0.camera != nil }.map { Double($0.end - $0.start) / Double(plan.fps) }
             print(String(format: "Plan: %d shots, %.1f s average, shortest %.2f s, %d clips",
                          plan.shots.count, durations.reduce(0, +) / Double(max(1, durations.count)),
@@ -94,17 +95,14 @@ func run() async throws {
                 let output = OutputSpec(width: spec.width, height: spec.height, fps: plan.fps, codec: project.codec, crf: project.crf, look: project.look)
                 let edit = try await Renderer.prepare(shots: plan.shots, clips: analysis.clips, bounce: URL(fileURLWithPath: part.path),
                                                       window: lo..<hi, spec: output)
-                let url = folder.appendingPathComponent("\(Engine.baseName(project))_\(Int(a))-\(Int(b)).\(project.codec.fileExtension)")
+                let url = folder.appendingPathComponent("\(paths.setName) - range \(Int(a))-\(Int(b)).\(project.codec.fileExtension)")
                 let t0 = Date()
                 try await Renderer.export(edit, to: url, spec: output) { _ in }
                 let seconds = Date().timeIntervalSince(t0)
                 print(String(format: "Rendered %@ in %.1f s (%.1f× real time)", url.lastPathComponent, seconds, (b - a) / seconds))
                 continue
             }
-            let social = Engine.socialFolder(project: project, partIndex: index + 1, partCount: parts.count, part: part)
-            let outputs = try await engine.render(project: project, analysis: analysis, plan: plan, folder: folder,
-                                                  clipFolder: social,
-                                                  alternativesFolders: Engine.alternativeFolders(project: project, partIndex: index + 1, partCount: parts.count, part: part)) { title, fraction in
+            let outputs = try await engine.render(project: project, analysis: analysis, plan: plan, paths: paths) { title, fraction in
                 FileHandle.standardError.write(String(format: "\r%@ %3.0f%%", title, fraction * 100).data(using: .utf8)!)
             }
             print("")

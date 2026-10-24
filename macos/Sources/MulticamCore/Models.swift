@@ -208,6 +208,8 @@ public struct Project: Codable, Hashable, Sendable {
     public var clipFraming: ClipFraming = .smart
     public var engine: EngineVersion = .two
     public var clipAlternatives = true
+    /// Looks for social clips: "auto" (mix of black and white and colour), "off", or one Look.Style for all.
+    public var clipFilters = "auto"
     public var clipCount: Int = 5
     public var clipMode: ClipMode = .best
     public var clipAspect: Aspect = .portrait
@@ -226,7 +228,7 @@ public struct Project: Codable, Hashable, Sendable {
         case aspect, resolution, codec, crf, planner, vision, clips, look
         case fullEdit = "full_edit", clipCount = "clip_count", clipMode = "clip_mode"
         case clipAspect = "clip_aspect", clipResolution = "clip_resolution", clipFade = "clip_fade"
-        case clipLengths = "clip_lengths", clipFraming = "clip_framing", engine, clipAlternatives = "clip_alternatives"
+        case clipLengths = "clip_lengths", clipFraming = "clip_framing", engine, clipAlternatives = "clip_alternatives", clipFilters = "clip_filters"
         case mode, clipsOnly = "clips_only", clipExcludes = "clip_excludes"
     }
 
@@ -271,6 +273,7 @@ public struct Project: Codable, Hashable, Sendable {
         clipFraming = value(.clipFraming, .smart)
         engine = value(.engine, .two)
         clipAlternatives = value(.clipAlternatives, true)
+        clipFilters = value(.clipFilters, "auto")
         clipMode = value(.clipMode, .best)
         clipAspect = value(.clipAspect, .portrait)
         clipResolution = value(.clipResolution, 1080)
@@ -322,6 +325,7 @@ public struct Project: Codable, Hashable, Sendable {
         try c.encode(clipFraming, forKey: .clipFraming)
         try c.encode(engine, forKey: .engine)
         try c.encode(clipAlternatives, forKey: .clipAlternatives)
+        try c.encode(clipFilters, forKey: .clipFilters)
         try c.encode(clipMode, forKey: .clipMode)
         try c.encode(clipAspect, forKey: .clipAspect)
         try c.encode(clipResolution, forKey: .clipResolution)

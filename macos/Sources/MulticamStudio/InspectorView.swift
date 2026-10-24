@@ -242,11 +242,10 @@ struct ExportSettings: View {
                 Button("Choose Folder…") { state.chooseOutputFolder() }
                 Button("Show") { state.revealOutputs() }
             }
-            TextField("File name (optional)", text: $state.project.outputName)
+            TextField("Set name (optional)", text: $state.project.outputName)
             Toggle("Replace existing files", isOn: $state.project.overwrite)
-            if state.parts.count > 1 {
-                Text("Each audio excerpt gets its own numbered folder inside this one. All social clips go in one Social media folder here, with a folder per excerpt and length inside it.").font(.caption).foregroundStyle(.secondary)
-            }
+            Text("Full edits go in Full sets, social clips in Social media (a folder per set, then per length) and cut lists in Project files. Files are named after the audio, or the name above.")
+                .font(.caption).foregroundStyle(.secondary)
 
             Divider()
             Toggle(isOn: $state.project.fullEdit) { Text("Full edit").font(.headline) }
@@ -261,7 +260,7 @@ struct ExportSettings: View {
             })) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Social clips").font(.headline)
-                    Text("Reels, Shorts and TikTok at several lengths, all in one Social media folder").font(.caption).foregroundStyle(.secondary)
+                    Text("Reels, Shorts and TikTok at several lengths, in the Social media folder").font(.caption).foregroundStyle(.secondary)
                 }
             }
             if state.project.clips > 0 {
@@ -290,6 +289,14 @@ struct ExportSettings: View {
                 Text(state.project.engine == .two
                      ? "Lengths are a guide: a 15 s clip is 8 bars, then it lands the next downbeat and lets it ring for a beat (about 15½ s at 128 BPM). Engine 1 stops at the bar line instead."
                      : "Lengths are a guide: a 15 s clip is 8 bars and stops right at the next bar line (Engine 1). Engine 2 lands the next downbeat.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Picker("Filters", selection: $state.project.clipFilters) {
+                    Text("Auto mix (some black & white)").tag("auto")
+                    Text("Off").tag("off")
+                    Divider()
+                    ForEach(Look.Style.allCases.filter { $0 != .none }) { Text("All \($0.title)").tag($0.rawValue) }
+                }
+                Text("Auto mix makes about a third of the clips black and white (the calmer moments) and gives the rest varied colour looks. The full edit keeps its own look.")
                     .font(.caption).foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("No social clips from")

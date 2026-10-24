@@ -1,5 +1,15 @@
 # Changes
 
+## 2.7.0
+
+- **Filters for social clips**, automatic by default: *Auto mix* makes about a third of the clips black and white (Noir or Silver, the calmer moments) and gives the rest varied colour looks (Original, Vivid, Vintage, Warm, Super 8, Faded film). You can also turn filters off or give every clip one look. The full edit is unaffected; the alternatives use the same look as their clip.
+- **Tidy exports and nicer names.** One export folder for everything:
+  - `Full sets/26-09-26-1.mp4`
+  - `Social media/26-09-26-1/15s/26-09-26-1 - 15s - 01 - 3m39s.mp4`
+  - `Social media alternatives/<shape>/26-09-26-1/15s/…`
+  - `Project files/26-09-26-1/` (cut list, report, previews)
+  Sets are named after the audio file, or after the set name you type (“Friday - Part 1”, “Friday - Part 2”…).
+
 ## 2.6.1
 
 - Mac app: the Look colour choice is a menu again; with the new looks the row of buttons was wider than the panel and pushed the whole Export tab over the preview.

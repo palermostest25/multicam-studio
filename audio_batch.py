@@ -17,6 +17,15 @@ import signal
 import sys
 import tempfile
 
+EXPORT_FOLDERS = ('Full sets', 'Social media', 'Social media alternatives', 'Project files')
+
+
+def readable_name(text, fallback='Set'):
+    """Same rule as multicam_edit.readable_name (kept here so validation stays light)."""
+    name = re.sub(r'\s+', ' ', re.sub(r'[^A-Za-z0-9 ._-]+', ' ', str(text))).strip(' .')[:100].rstrip(' .')
+    return name if name and name[0].isalnum() else fallback
+
+
 TIMING_KEYS = ('overrides', 'shot_overrides', 'drops', 'breakdowns', 'activities', 'clip_excludes')
 
 
@@ -42,30 +51,35 @@ def validate_config(raw):
         seen.add(path)
         checked.append(part)
     first = checked[0]
-    prefix = first['output_name'] or ('multicam_cut_vertical' if first['mode'] == 'vertical' else 'multicam_cut')
+    prefix = first['output_name']
     inputs = [Path(p['audio']) for p in checked]
     if first.get('cameras'):
         inputs.extend(Path(c['path']) for cam in first['cameras'] for c in cam['clips'])
     else:
         inputs.extend(Path(p) for key in ('cam_a', 'cam_b') for p in first[key])
-    parent_output = Path(first['output_dir'])
+    # Every excerpt writes into the same export root (Full sets, Social media, Social media
+    # alternatives, Project files), each under its own set name.
+    root = Path(first['output_dir']).expanduser().resolve()
+    for folder in EXPORT_FOLDERS:
+        if any(p.is_relative_to(root / folder) for p in inputs):
+            raise ValueError(f'The {folder} folder contains an input. Choose a different output folder.')
+    used = set()
     for index, part in enumerate(checked, 1):
-        stem = re.sub(r'[^A-Za-z0-9._-]+', '_', Path(part['audio']).stem).strip('._')[:40] or 'audio'
-        destination = (parent_output / f'part_{index:03d}_{stem}').resolve()
-        if any(p.is_relative_to(destination) for p in inputs):
-            raise ValueError('An excerpt output folder contains an input. Choose a different output folder.')
-        if destination.exists() and (not destination.is_dir() or (not part['overwrite'] and any(destination.iterdir()))):
-            raise ValueError(f'Excerpt output already exists: {destination}. Enable overwrite or choose another folder.')
-        social = (parent_output / 'Social media' / f'part_{index:03d}_{stem}').resolve()
-        if any(p.is_relative_to(social) for p in inputs):
-            raise ValueError('The social media folder contains an input. Choose a different output folder.')
-        alternatives = (parent_output / 'Social media alternatives').resolve()
-        if any(p.is_relative_to(alternatives) for p in inputs):
-            raise ValueError('The social media alternatives folder contains an input. Choose a different output folder.')
-        part.update(output_dir=str(destination), output_name=f'{prefix[:100]}_part_{index:03d}', clips_dir=str(social),
-                    alternatives_dir=str(alternatives), alternatives_part=f'part_{index:03d}_{stem}')
+        if prefix:
+            name = f'{prefix[:90]} - Part {index}'
+        else:
+            name = readable_name(Path(part['audio']).stem) + (' vertical' if part['mode'] == 'vertical' else '')
+        if name.casefold() in used:
+            name = f'{name} ({index})'
+        used.add(name.casefold())
+        extension = 'mov' if part.get('codec') == 'prores' or part.get('container') == 'mov' else 'mp4'
+        files = root / 'Project files' / name
+        if not part['overwrite'] and ((root / 'Full sets' / f'{name}.{extension}').exists()
+                                      or (files.is_dir() and any(files.iterdir()))):
+            raise ValueError(f'Excerpt output already exists: {files}. Enable overwrite or choose another folder.')
+        part.update(output_dir=str(root), output_name=name)
     return {**first, 'audio': first['audio'], 'output_dir': str(Path(base['output_dir']).expanduser().resolve()),
-            'output_name': prefix, 'audio_parts': [dict(path=p['audio'], **{key: p[key] for key in TIMING_KEYS}) for p in checked],
+            'output_name': prefix or 'Audio parts', 'audio_parts': [dict(path=p['audio'], **{key: p[key] for key in TIMING_KEYS}) for p in checked],
             'part_configs': checked}
 
 
@@ -76,7 +90,8 @@ def run_batch(raw, report_path=None):
     config = validate_config(raw)
     folder = Path(config['output_dir'])
     folder.mkdir(parents=True, exist_ok=True)
-    manifest = folder / (config['output_name'] + '_audio_parts.json')
+    (folder / 'Project files').mkdir(parents=True, exist_ok=True)
+    manifest = folder / 'Project files' / (config['output_name'] + ' - audio parts.json')
     report = Path(report_path).expanduser().resolve() if report_path else manifest
     all_inputs = {Path(p['audio']) for p in config['part_configs']}
     definitions = config.get('cameras') or [dict(id=id, clips=[dict(path=p, framing={'mode': 'crop', 'center': config[key], 'zoom': 1}) for p in config[paths]]) for id, paths, key in [('A', 'cam_a', 'a_center'), ('B', 'cam_b', 'b_center')]]
@@ -134,7 +149,8 @@ def run_batch(raw, report_path=None):
                         entry['warnings'].append(f'The main camera could not be synced; using {part["main_camera"]} for this excerpt.')
                     output = Path(part['output_dir'])
                     output.mkdir(parents=True, exist_ok=True)
-                    part_report = output / 'edit_report.json'
+                    part_report = output / 'Project files' / part['output_name'] / 'Report.json'
+                    part_report.parent.mkdir(parents=True, exist_ok=True)
                     # Use the same renderer directly: clips are rendered once at
                     # their correct source position, not cut from a second encode.
                     entry['status']='planning' if part['plan_only'] else 'rendering'

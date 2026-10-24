@@ -10,6 +10,7 @@ seconds; an end fade outside that interval will not appear in the preview.
 from __future__ import annotations
 
 import argparse
+from looks import LOOK_FILTERS, STYLES as LOOK_STYLES
 from fractions import Fraction
 import json
 import math
@@ -21,7 +22,7 @@ import sys
 import tempfile
 
 PRESETS = {'ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow'}
-STYLES = {'none', 'warm', 'cool', 'mono', 'vintage', 'vivid', 'noir', 'silver', 'sepia', 'super8', 'faded'}
+STYLES = set(LOOK_STYLES)
 
 
 def numeric(value, label, minimum=None, maximum=None, integer=False):
@@ -182,21 +183,7 @@ def video_filters(c):
         filters += [f'scale={sw}:{sh}',
                     f"crop={w}:{h}:x='(in_w-out_w)/2*(1+sin(2*PI*t*1.4))':"
                     "y='(in_h-out_h)/2*(1+sin(2*PI*t*1.9+0.8))'"]
-    styles = {
-        'none': [],
-        'warm': ['colorbalance=rs=0.035:rm=0.04:bs=-0.035:bm=-0.025'],
-        'cool': ['colorbalance=rs=-0.025:rm=-0.02:bs=0.045:bm=0.035'],
-        'mono': ['hue=s=0'],
-        'vintage': ['eq=contrast=0.94:saturation=0.7:brightness=0.025',
-                    'colorbalance=rm=0.04:bm=-0.03'],
-        'vivid': ['eq=contrast=1.08:saturation=1.22'],
-        'noir': ['hue=s=0', 'eq=contrast=1.35:brightness=-0.02'],
-        'silver': ['hue=s=0', 'eq=contrast=0.85:brightness=0.03', 'colorbalance=bm=0.02'],
-        'sepia': ['hue=s=0', 'colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131'],
-        'super8': ['eq=contrast=0.88:saturation=0.75:brightness=0.03', 'colorbalance=rm=0.06:bm=-0.08',
-                   'noise=alls=14:allf=t', 'vignette=PI/4.5'],
-        'faded': ['eq=contrast=0.8:saturation=0.8:brightness=0.06', 'colorbalance=rm=0.02:bm=-0.03'],
-    }
+    styles = LOOK_FILTERS
     filters += styles[c['style']]
     if c['brightness'] or c['contrast'] != 1 or c['saturation'] != 1:
         filters.append(f'eq=brightness={c["brightness"]}:contrast={c["contrast"]}:saturation={c["saturation"]}')
