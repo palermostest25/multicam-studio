@@ -176,6 +176,12 @@ struct EditTimeline: View {
                     }
                 }
             }
+            // Stretches kept out of social clips: a red band across the waveform and lanes.
+            for range in state.currentPart?.clipExcludes ?? [] where range.count == 2 {
+                let r = CGRect(x: x(range[0]), y: rulerHeight, width: max(2, x(range[1]) - x(range[0])), height: size.height - rulerHeight)
+                context.fill(Path(r), with: .color(.red.opacity(0.13)))
+                context.fill(Path(CGRect(x: r.minX, y: rulerHeight, width: r.width, height: 3)), with: .color(.red.opacity(0.75)))
+            }
             // Selection
             if let selection {
                 let r = CGRect(x: x(selection.lowerBound), y: rulerHeight, width: max(2, x(selection.upperBound) - x(selection.lowerBound)), height: size.height - rulerHeight)
@@ -223,6 +229,8 @@ struct EditTimeline: View {
             Group {
                 Button("Mark drop") { state.addMarker(start: range.lowerBound, end: range.upperBound, kind: "drop"); selection = nil }
                 Button("Mark breakdown") { state.addMarker(start: range.lowerBound, end: range.upperBound, kind: "breakdown"); selection = nil }
+                Button("No social clips here") { state.excludeFromClips(start: range.lowerBound, end: range.upperBound); selection = nil }
+                    .help("Social clips will never be taken from this stretch")
                 Button("Play") { state.seek(toTimeline: range.lowerBound); state.player.play() }
             }
             .controlSize(.small)

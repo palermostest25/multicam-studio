@@ -336,11 +336,12 @@ def plan_cost(shots, cameras, fps, scores, main_camera, rhythm):
     return share_cost + quality_cost + 10 * flashes + black
 
 
-def window_scores(music, cameras, total, fps, length, scores=None, ending='beat'):
+def window_scores(music, cameras, total, fps, length, scores=None, ending='beat', excludes=()):
     """Score every bar-aligned window of about `length` seconds for a short clip.
 
     ending='beat' plays through the next downbeat and lets it ring for one beat, so the
-    clip finishes on the "one"; ending='bar' stops right at the next bar line."""
+    clip finishes on the "one"; ending='bar' stops right at the next bar line. Windows that touch
+    an excluded (start, end) range are skipped."""
     duration = total / fps
     downbeats = music.get('downbeats', []) if music and music.get('confidence', 0) >= 0.35 else []
     if len(downbeats) > 8:
@@ -381,6 +382,8 @@ def window_scores(music, cameras, total, fps, length, scores=None, ending='beat'
         a, b, tail = span_of(i)
         if b > duration + 0.01:
             break
+        if any(a < e_end and e_start < b for e_start, e_end in excludes):
+            continue
         fa, fb = round(a * fps), round(b * fps)
         # Clips must be fully covered by footage: no black in a reel.
         if not fully_covered(cameras, fa, fb):

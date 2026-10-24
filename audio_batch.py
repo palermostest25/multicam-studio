@@ -17,7 +17,7 @@ import signal
 import sys
 import tempfile
 
-TIMING_KEYS = ('overrides', 'shot_overrides', 'drops', 'breakdowns', 'activities')
+TIMING_KEYS = ('overrides', 'shot_overrides', 'drops', 'breakdowns', 'activities', 'clip_excludes')
 
 
 def validate_config(raw):

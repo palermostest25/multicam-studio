@@ -1190,6 +1190,8 @@ def build_parser():
     parser.add_argument("--b-center", type=float, nargs=2, default=[0.5, 0.72], metavar=("X", "Y"))
     parser.add_argument("--drop", type=time_range, action="append", default=[])
     parser.add_argument("--breakdown", type=time_range, action="append", default=[])
+    parser.add_argument("--clip-exclude", type=time_range, action="append", default=[],
+                        help="Never take a social clip from this range (repeatable)")
     parser.add_argument("--activity", type=seconds, action="append", default=[])
     parser.add_argument("--no-auto-sections", action="store_true")
     parser.add_argument("--no-drift", action="store_true")
@@ -1491,7 +1493,7 @@ def main(argv=None):
         forced = [s for s in shots if s.reason == "manual shot override"]
         for length in args.clip_lengths:
             windows = planner.window_scores(args.music, cameras, total, args.fps, length, scores,
-                                            'beat' if args.engine >= 2 else 'bar')
+                                            'beat' if args.engine >= 2 else 'bar', args.clip_exclude)
             chosen = planner.choose_clips(windows, args.clip_count, args.clip_mode)
             for number, w in enumerate(chosen, 1):
                 index = len(clips) + 1

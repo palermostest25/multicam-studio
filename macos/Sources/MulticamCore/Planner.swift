@@ -405,7 +405,8 @@ public enum Planner {
     }
 
     public static func windows(music: MusicInfo?, cameras: [Coverage], total: Int, fps: Int, length: Double,
-                               scores: [CameraScores], ending: ClipEnding = .beat) -> [ClipWindow] {
+                               scores: [CameraScores], ending: ClipEnding = .beat,
+                               excludes: [[Double]] = []) -> [ClipWindow] {
         let f = Double(fps), duration = Double(total) / f
         let downbeats = (music?.hasGrid ?? false) ? music!.downbeats : []
         var spans = [(Double, Double, Bool, Double)]()
@@ -440,6 +441,7 @@ public enum Planner {
         var result = [ClipWindow]()
         for (a, b, phrase, tail) in spans {
             if b > duration + 0.01 { break }
+            if excludes.contains(where: { $0.count == 2 && a < $0[1] && $0[0] < b }) { continue }
             guard fullyCovered(cameras, Int((a * f).rounded()), Int((b * f).rounded())) else { continue }
             var level = 0.5
             if !barStarts.isEmpty && !energy.isEmpty {
