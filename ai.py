@@ -88,6 +88,18 @@ def find_cli(name):
     return None
 
 
+def cli_environment():
+    """The environment for the Claude Code / Codex tools, without the settings a Claude Code session
+    passes to its children (they point the tool at that session instead of your own sign-in)."""
+    env = dict(os.environ)
+    inside_session = 'CLAUDECODE' in env
+    for name in list(env):
+        if (name.startswith(('CLAUDE_CODE_', 'CLAUDE_AGENT_SDK')) or name in ('CLAUDECODE', 'CLAUDE_PID', 'CLAUDE_EFFORT', 'AI_AGENT')
+                or (inside_session and name == 'ANTHROPIC_BASE_URL')):
+            env.pop(name)
+    return env
+
+
 def available(openrouter_key=''):
     return {'claude': bool(find_cli('claude')), 'codex': bool(find_cli('codex')), 'openrouter': bool(openrouter_key)}
 
@@ -132,7 +144,7 @@ def _cli(provider, text, timeout, model=''):
             cmd.append(SYSTEM_PROMPT + '\n\n' + text)
         try:
             result = subprocess.run(cmd, cwd=work, capture_output=True, text=True, encoding='utf-8',
-                                    errors='replace', timeout=timeout, stdin=subprocess.DEVNULL)
+                                    errors='replace', timeout=timeout, stdin=subprocess.DEVNULL, env=cli_environment())
         except subprocess.TimeoutExpired:
             raise AIError('The AI took too long to answer. Try again or use a shorter request.')
         if provider == 'claude':
@@ -143,7 +155,8 @@ def _cli(provider, text, timeout, model=''):
             if envelope.get('is_error'):
                 message = str(envelope.get('result') or 'Claude Code returned an error.')
                 if 'authenticat' in message.lower() or '401' in message:
-                    message += ' Open Terminal and run "claude" to sign in again.'
+                    message = ('Claude Code’s own sign-in on this machine has expired (it is separate from the Claude app). '
+                               'Open Terminal, run "claude auth login", then try again.')
                 raise AIError(message)
             if isinstance(envelope.get('structured_output'), dict):
                 return json.dumps(envelope['structured_output'])
