@@ -9,19 +9,36 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION="${VERSION:-2.7.0}"
+VERSION="${VERSION:-2.8.0}"
 ARCHS="${ARCHS:-arm64 x86_64}"
 SCRATCH="${SCRATCH:-.build}"
 DIST="${DIST:-dist}"
 APP="$DIST/Multicam Studio.app"
 
+echo "Building $VERSION for: $ARCHS"
 arch_flags=()
 for a in $ARCHS; do arch_flags+=(--arch "$a"); done
-
-echo "Building $VERSION for: $ARCHS"
-swift build -c release --scratch-path "$SCRATCH" "${arch_flags[@]}" --product MulticamStudio
-swift build -c release --scratch-path "$SCRATCH" "${arch_flags[@]}" --product mcstudio
-BIN="$(swift build -c release --scratch-path "$SCRATCH" "${arch_flags[@]}" --show-bin-path)"
+if swift build -c release --scratch-path "$SCRATCH" "${arch_flags[@]}" --product MulticamStudio \
+   && swift build -c release --scratch-path "$SCRATCH" "${arch_flags[@]}" --product mcstudio; then
+    BIN="$(swift build -c release --scratch-path "$SCRATCH" "${arch_flags[@]}" --show-bin-path)"
+else
+    # Command Line Tools only: one build per architecture, joined with lipo. Record SDK 14 like the
+    # Xcode build does: linking against a newer SDK turns on SwiftUI split-view behaviour that
+    # aborted the app at launch (update-constraints loop).
+    BIN="$SCRATCH/universal"
+    mkdir -p "$BIN"
+    for product in MulticamStudio mcstudio; do
+        slices=()
+        for a in $ARCHS; do
+            swift build -c release --scratch-path "$SCRATCH/$a" --arch "$a" --product "$product" \
+                -Xlinker -platform_version -Xlinker macos -Xlinker 14.0 -Xlinker 14.0
+            slices+=("$(swift build -c release --scratch-path "$SCRATCH/$a" --arch "$a" --show-bin-path)/$product")
+        done
+        lipo -create "${slices[@]}" -output "$BIN/$product"
+    done
+fi
+# Never ship a build that links a newer SDK (see above).
+otool -arch arm64 -l "$BIN/MulticamStudio" | grep -A4 LC_BUILD_VERSION | grep -q "sdk 14.0" || { echo "error: app links a newer SDK"; exit 1; }
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Helpers"

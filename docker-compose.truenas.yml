@@ -23,6 +23,8 @@ services:
       MULTICAM_ALLOWED_HOSTS: "192.168.1.10"
       # Sign-in password for the web page. Change it before deploying.
       MULTICAM_PASSWORD: "change-me"
+      # Optional: an OpenRouter API key for AI mode (you can also save one from the AI panel).
+      # MULTICAM_OPENROUTER_KEY: "sk-or-..."
       NVIDIA_VISIBLE_DEVICES: "all"
       NVIDIA_DRIVER_CAPABILITIES: "compute,video,utility"
     deploy:

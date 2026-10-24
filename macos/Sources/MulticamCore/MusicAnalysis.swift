@@ -360,7 +360,10 @@ public enum MusicAnalysis {
             return x.map { min(1, max(0, ($0 - lo) / max(1e-6, hi - lo))) }
         }
         let (u1, u2, u3) = (unit(loudness), unit(bass), unit(busy))
-        info.barEnergy = (0..<u1.count).map { ((u1[$0] + u2[$0] + u3[$0]) / 3 * 1000).rounded() / 1000 }
+        info.barEnergy = (0..<u1.count).map { (i: Int) -> Double in
+            let mean: Double = (u1[i] + u2[i] + u3[i]) / 3
+            return (mean * 1000).rounded() / 1000
+        }
         info.barStarts = barStarts.map { ($0 * 1000).rounded() / 1000 }
         return info
     }

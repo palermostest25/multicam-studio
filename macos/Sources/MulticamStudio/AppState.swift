@@ -42,6 +42,13 @@ final class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published var inspectorTab = "export"
 
+    // AI mode (optional): a request, the result, and the project as it was before, for Undo.
+    struct AIResult { var summary: String; var changes: [String]; var failed = false }
+    @Published var aiPrompt = ""
+    @Published var aiRunning = false
+    @Published var aiResult: AIResult?
+    @Published var aiUndo: Project?
+
     let player = AVPlayer()
     private var work: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
@@ -268,6 +275,43 @@ final class AppState: ObservableObject {
             part.clipExcludes.append([start, end])
             part.clipExcludes.sort { $0[0] < $1[0] }
         }
+    }
+
+    func askAI(provider: AIGuide.Provider, model: String, key: String) {
+        guard !aiRunning else { return }
+        var shapes = [String: String]()
+        for camera in project.cameras {
+            if let path = camera.clips.first?.path, let size = mediaInfo[path]?.orientedSize, size.width > 0 {
+                shapes[camera.id] = size.height > size.width ? "portrait" : size.height == size.width ? "square" : "landscape"
+            }
+        }
+        let context = AIGuide.context(project: project, analyses: analyses, shapes: shapes)
+        let prompt = aiPrompt
+        aiRunning = true
+        aiResult = nil
+        Task {
+            do {
+                let guidance = try await AIGuide.ask(provider, prompt: prompt, context: context, key: key, model: model)
+                let before = project
+                var changed = project
+                AIGuide.apply(guidance, to: &changed)
+                project = changed
+                aiUndo = before
+                let changes = AIGuide.describe(guidance)
+                aiResult = AIResult(summary: guidance.summary, changes: changes.isEmpty ? ["No settings needed to change."] : changes)
+                append("AI guidance applied: \(guidance.summary)")
+            } catch {
+                aiResult = AIResult(summary: error.localizedDescription, changes: [], failed: true)
+            }
+            aiRunning = false
+        }
+    }
+
+    func undoAI() {
+        guard let before = aiUndo else { return }
+        project = before
+        aiUndo = nil
+        aiResult = AIResult(summary: "Undone. Your settings are back as they were.", changes: [])
     }
 
     func shuffle() { project.seed = Int.random(in: 1...999_999) }

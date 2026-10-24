@@ -51,7 +51,7 @@ else:
     import fcntl
 
 APP = Path(__file__).resolve().parent
-VERSION = '2.7.0'
+VERSION = '2.8.0'
 APP_ID = 'com.multicamstudio.desktop'
 DISCONNECTS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)
 _RUNNING_SERVER = None
@@ -621,6 +621,24 @@ class Studio:
         self.dependency_cache=result
         return dict(result)
 
+    def openrouter_key(self):
+        """OpenRouter key: MULTICAM_OPENROUTER_KEY, else the one saved from Settings (kept server side only)."""
+        if os.environ.get('MULTICAM_OPENROUTER_KEY'):return os.environ['MULTICAM_OPENROUTER_KEY']
+        try:return str(json.loads((self.state/'ai.json').read_text(encoding='utf-8')).get('openrouter_key') or '')
+        except (OSError,ValueError,AttributeError):return ''
+
+    def save_openrouter_key(self,key):
+        path=self.state/'ai.json'
+        key=str(key or '').strip()
+        if not key:
+            path.unlink(missing_ok=True);return
+        if len(key)>300 or any(c.isspace() for c in key):raise ValueError('That does not look like an OpenRouter key.')
+        temporary=path.with_name('.ai.json.tmp')
+        temporary.write_text(json.dumps({'openrouter_key':key}),encoding='utf-8')
+        try:os.chmod(temporary,0o600)
+        except OSError:pass
+        temporary.replace(path)
+
     @property
     def sign_in(self):
         """A password is only asked for when the studio serves other machines."""
@@ -892,6 +910,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.studio.dependency_cache=None
                 return self.json_response(200,self.studio.setup_snapshot())
             if u.path=='/api/diagnostics':return self.json_response(200,self.studio.diagnostics())
+            if u.path=='/api/ai/providers':
+                import ai
+                key=self.studio.openrouter_key()
+                return self.json_response(200,{**ai.available(key),'default_model':ai.DEFAULT_OPENROUTER_MODEL,
+                                               'key_from_environment':bool(os.environ.get('MULTICAM_OPENROUTER_KEY'))})
             if u.path=='/api/library':return self.json_response(200,self.studio.library())
             if u.path=='/api/browse':
                 p=resolved(query.get('path',[str(self.studio.default_folder)])[0])
@@ -996,6 +1019,10 @@ class Handler(BaseHTTPRequestHandler):
                 target.mkdir()
                 return self.json_response(201,{'path':str(target),'name':name})
             if u.path=='/api/jobs':return self.json_response(201,{'id':self.studio.start(data)})
+            if u.path=='/api/ai/guide':return self.ai_guide(data)
+            if u.path=='/api/ai/key':
+                self.studio.save_openrouter_key(data.get('key'))
+                return self.json_response(200,{'openrouter':bool(self.studio.openrouter_key())})
             if u.path=='/api/highlights/export':
                 return self.json_response(201,{'id':self.studio.start(data,'highlights')})
             if u.path in ('/api/clips','/api/effects'):
@@ -1099,6 +1126,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def waveform(self,data):
         path=resolved(data.get('path'))
+        result=self.waveform_data(path)
+        from highlights import plan_clips
+        result['energetic']=plan_clips(result['peaks'],result['duration'],data.get('target_seconds',30),result['maximum'])
+        result['target_seconds']=float(data.get('target_seconds',30))
+        result['audio_url']=self.studio.register(path,'audio')['url']
+        return self.json_response(200,result)
+
+    def waveform_data(self,path):
+        """Peaks, duration and beat/section analysis for an audio file (cached in the state folder)."""
         if not path.is_file() or path.suffix.lower() not in VIDEO_EXTS|AUDIO_EXTS:raise ValueError('Choose a WAV bounce or rendered video.')
         folder=self.studio.state/'waveforms';folder.mkdir(exist_ok=True)
         stat=path.stat();key=hashlib.sha256(f'v5:{path}:{stat.st_size}:{stat.st_mtime_ns}'.encode()).hexdigest()
@@ -1136,11 +1172,49 @@ class Handler(BaseHTTPRequestHandler):
                 samples=None
                 try:pcm.unlink(missing_ok=True)
                 except OSError:pass
-        from highlights import plan_clips
-        result['energetic']=plan_clips(result['peaks'],result['duration'],data.get('target_seconds',30),result['maximum'])
-        result['target_seconds']=float(data.get('target_seconds',30))
-        result['audio_url']=self.studio.register(path,'audio')['url']
-        return self.json_response(200,result)
+        return result
+
+    # AI mode: the browser sends its project; the server adds the set analysis and asks the provider.
+    def ai_context(self,project):
+        parts=project.get('audio_parts') or ([{'path':project.get('audio'),**{k:project.get(k) or [] for k in ('drops','breakdowns','shot_overrides','clip_excludes')}}] if project.get('audio') else [])
+        summary=[]
+        for index,part in enumerate(parts[:100],1):
+            path=resolved(part.get('path'))
+            entry={'part':index,'name':path.stem}
+            try:
+                data=self.waveform_data(path);entry['duration']=round(data['duration'],1)
+                music=data.get('music') or {}
+                if music.get('bpm'):entry['bpm']=round(music['bpm'],1)
+                entry['drops']=[round(t,1) for t in music.get('drops') or []][:80]
+                entry['sections']=[{'start':round(s['start'],1),'end':round(s['end'],1),'kind':s['kind']} for s in music.get('sections') or []][:150]
+            except Exception as exc:entry['note']=f'Not analysed: {exc}'
+            entry['marked']={'drops':part.get('drops') or [],'breakdowns':part.get('breakdowns') or [],'no_clips':part.get('clip_excludes') or [],
+                             'forced':[{'start':o.get('start'),'end':o.get('end'),'camera':o.get('camera_id')} for o in part.get('shot_overrides') or [] if isinstance(o,dict)]}
+            summary.append(entry)
+        cameras=[]
+        for camera in project.get('cameras') or []:
+            clips=camera.get('clips') or [];shape='unknown'
+            if clips and clips[0].get('path'):
+                try:
+                    stream=next(s for s in json.loads(subprocess.run(['ffprobe','-v','error','-select_streams','v:0','-show_streams','-of','json',str(resolved(clips[0]['path']))],capture_output=True,text=True,**UTF8,timeout=20).stdout)['streams'])
+                    w,h=stream.get('width',0),stream.get('height',0)
+                    rotation=next((abs(int(d.get('rotation',0))) for d in stream.get('side_data_list',[]) if 'rotation' in d),abs(int(stream.get('tags',{}).get('rotate',0) or 0)))
+                    if rotation in (90,270):w,h=h,w
+                    shape='portrait' if h>w else 'square' if h==w else 'landscape'
+                except Exception:pass
+            cameras.append({'id':camera.get('id'),'label':camera.get('label'),'shape':shape,'main':camera.get('id')==project.get('main_camera')})
+        settings={k:project.get(k) for k in ('main_camera','main_share','cut_scale','clip_lengths','clip_count','clip_mode','clip_filters','aspect','clip_aspect')}
+        return {'parts':summary,'cameras':cameras,'settings':settings}
+
+    def ai_guide(self,data):
+        import ai
+        project=data.get('project')
+        if not isinstance(project,dict):raise ValueError('Expected the current project.')
+        provider=str(data.get('provider') or '')
+        context=self.ai_context(project)
+        try:guidance=ai.ask(provider,str(data.get('prompt') or '')[:4000],context,key=self.studio.openrouter_key(),model=str(data.get('model') or '')[:200])
+        except ai.AIError as exc:return self.json_response(400,{'error':str(exc)})
+        return self.json_response(200,{'guidance':guidance,'changes':ai.describe(guidance)})
 
 
 class InstanceLock:

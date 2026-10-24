@@ -43,3 +43,16 @@ select{text-overflow:ellipsis}
 .header-right{flex:1 1 100%;max-width:none;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:6px}
 .header-right>:not(button){display:none}
 .header-right button{font-size:13px;padding:8px 6px;white-space:nowrap}}
+
+/* 2.8.0: AI mode. Hidden entirely unless the AI mode button is on. */
+#ai-toggle[aria-pressed=true]{color:var(--accent);border-color:#5b6b45;background:#252e1e}
+.ai-panel{border-color:#4a5a3a;background:linear-gradient(180deg,#1b2118,#181b17)}
+.ai-panel .step{color:var(--accent)}
+.ai-actions{display:flex;gap:8px;margin-top:12px}
+#ai-apply{background:var(--accent);color:#141812;border-color:transparent;font-weight:600;flex:1}
+#ai-apply:hover{filter:brightness(1.06)}
+#ai-apply:disabled{opacity:.6;cursor:progress}
+.ai-result{margin-top:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:#141713;font-size:13px}
+.ai-result p{margin:0 0 6px;color:var(--text)}
+.ai-result ul{margin:0;padding-left:18px;color:var(--muted-hi)}
+.ai-result.error{border-color:#6b3a33;color:var(--red)}
