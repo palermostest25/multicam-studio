@@ -139,6 +139,54 @@ final class PlannerTests: XCTestCase {
     }
 }
 
+final class AIGuideTests: XCTestCase {
+    let context: [String: Any] = ["parts": [["part": 1, "duration": 600.0], ["part": 2, "duration": 300.0]],
+                                  "cameras": [["id": "A"], ["id": "C"]]]
+
+    func testValidateKeepsOnlySaneValues() throws {
+        let raw = try AIGuide.parse("""
+        Sure! ```json
+        {"summary": "More C in drops", "main_camera": "Z", "main_share": 1.4, "pace": 0.1, "clip_lengths": [15, 15, 2, 400, 30],
+         "clip_count": 99, "clip_mode": "random", "clip_filters": "noir",
+         "parts": [{"part": 1, "force_cameras": [{"start": 60, "end": 75, "camera": "C"}, {"start": 1, "end": 9, "camera": "Q"}],
+                    "no_clips": [[0, 120], [500, 900], [5, 5.1]], "drops": [], "breakdowns": []},
+                   {"part": 7, "force_cameras": [], "no_clips": [[0, 10]], "drops": [], "breakdowns": []},
+                   {"part": true, "no_clips": [[0, 10]]}]}
+        ``` hope that helps
+        """)
+        let g = AIGuide.validate(raw, context: context)
+        XCTAssertNil(g.mainCamera)
+        XCTAssertEqual(g.mainShare, 0.9); XCTAssertEqual(g.pace, 0.4)
+        XCTAssertEqual(g.clipLengths, [3, 15, 30, 180])
+        XCTAssertEqual(g.clipCount, 50)
+        XCTAssertNil(g.clipMode)
+        XCTAssertEqual(g.clipFilters, "noir")
+        XCTAssertEqual(g.parts.count, 1)
+        XCTAssertEqual(g.parts[0].forceCameras, [AIGuide.ForcedRange(start: 60, end: 75, camera: "C")])
+        XCTAssertEqual(g.parts[0].noClips, [[0, 120], [500, 600]])
+        XCTAssertFalse(AIGuide.describe(g).isEmpty)
+        XCTAssertThrowsError(try AIGuide.parse("no json here"))
+    }
+
+    func testApplyChangesProjectAndParts() {
+        var project = Project()
+        project.audioParts = [AudioPart(path: "/a.wav"), AudioPart(path: "/b.wav")]
+        project.audioParts[1].shotOverrides = [ShotOverride(start: 10, end: 20, cameraID: "A"), ShotOverride(start: 100, end: 110, cameraID: "A")]
+        var g = AIGuide.Guidance()
+        g.pace = 2; g.clipLengths = [30, 15]; g.clipFilters = "mono"
+        g.parts = [AIGuide.PartGuidance(part: 2, forceCameras: [AIGuide.ForcedRange(start: 15, end: 30, camera: "C")], noClips: [[0, 60]])]
+        AIGuide.apply(g, to: &project)
+        XCTAssertEqual(project.cutScale, 0.5)
+        XCTAssertEqual(project.clipLengths, [30, 15]); XCTAssertEqual(project.clips, 15)
+        XCTAssertEqual(project.clipFilters, "mono")
+        XCTAssertEqual(project.audioParts[1].shotOverrides.map(\.cameraID), ["C", "A"])   // overlapping A replaced
+        XCTAssertEqual(project.audioParts[1].clipExcludes, [[0, 60]])
+        XCTAssertTrue(project.audioParts[0].clipExcludes.isEmpty)
+        let context = AIGuide.context(project: project, analyses: [:], shapes: ["A": "landscape"])
+        XCTAssertEqual((context["parts"] as? [[String: Any]])?.count, 2)
+    }
+}
+
 final class LookTests: XCTestCase {
     func testEveryLookRenders() {
         let size = CGSize(width: 64, height: 36)

@@ -3,12 +3,14 @@ import SwiftUI
 
 struct InspectorView: View {
     @EnvironmentObject var state: AppState
+    @AppStorage(AIMode.key) private var aiMode = false
     var body: some View {
         VStack(spacing: 0) {
             Picker("", selection: $state.inspectorTab) {
                 Text("Edit").tag("edit")
                 Text("Framing").tag("framing")
                 Text("Export").tag("export")
+                if aiMode { Text("AI").tag("ai") }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -19,6 +21,7 @@ struct InspectorView: View {
                     switch state.inspectorTab {
                     case "edit": EditSettings()
                     case "framing": FramingSettings()
+                    case "ai" where aiMode: AISettings()
                     default: ExportSettings()
                     }
                 }

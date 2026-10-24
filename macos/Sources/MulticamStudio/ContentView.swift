@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject var state: AppState
+    @AppStorage(AIMode.key) private var aiMode = false
     @State private var showInspector = true
     @State private var showLog = false
 
@@ -67,6 +68,13 @@ struct ContentView: View {
                     .keyboardShortcut("e")
                     .disabled(!state.hasSources)
             }
+            Button {
+                aiMode.toggle()
+                if aiMode { showInspector = true; state.inspectorTab = "ai" } else if state.inspectorTab == "ai" { state.inspectorTab = "export" }
+            } label: {
+                Label(aiMode ? "AI mode on" : "AI mode", systemImage: aiMode ? "sparkles.rectangle.stack.fill" : "sparkles")
+            }
+            .help(aiMode ? "Turn AI mode off" : "AI mode: describe what you want and let the AI set up the edit")
             Button { showInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
         }
     }

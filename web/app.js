@@ -42,6 +42,32 @@
     return body;
   }
   $('error-banner').querySelector('button').addEventListener('click', () => { $('error-banner').hidden = true; });
+  // AI mode: an optional panel that turns a request into ordinary settings. Off = the app as before.
+  const aiState={snapshot:null,providers:null};
+  function setAIMode(on){document.body.classList.toggle('ai-mode',on);$('ai-panel').hidden=!on;$('ai-toggle').setAttribute('aria-pressed',String(on));try{localStorage.setItem('multicam-ai-mode',on?'1':'0');}catch{}if(on&&!aiState.providers)loadAIProviders();}
+  async function loadAIProviders(){try{aiState.providers=await api('/api/ai/providers');$('ai-model').placeholder=aiState.providers.default_model||'openrouter/auto';updateAIFields();}catch(error){showError(error);}}
+  function updateAIFields(){const p=aiState.providers||{},choice=$('ai-provider').value,or=choice==='openrouter';$('ai-model-row').hidden=false;$('ai-model').placeholder=or?(p.default_model||'openrouter/auto'):'Default';$('ai-key-row').hidden=!or||p.key_from_environment;
+    const notes={claude:p.claude?'Uses the Claude Code app signed in on the studio machine.':'Claude Code isn’t installed on the studio machine. Install it and run “claude” once to sign in.',codex:p.codex?'Uses the Codex app signed in on the studio machine.':'Codex isn’t installed on the studio machine. Install it and run “codex login”.',openrouter:p.openrouter?(p.key_from_environment?'Using the key from MULTICAM_OPENROUTER_KEY.':'A key is saved. Paste a new one to replace it.'):'Paste an OpenRouter API key and save it. It stays on the studio machine.'};
+    $('ai-provider-note').textContent=notes[choice]||'';}
+  function applyGuidance(config,g){if(g.main_camera)config.main_camera=g.main_camera;if(g.main_share!=null)config.main_share=g.main_share;if(g.pace)config.cut_scale=Number((1/g.pace).toFixed(3));
+    if(g.clip_lengths){config.clip_lengths=g.clip_lengths;config.clips=g.clip_lengths[0];}if(g.clip_count!=null)config.clip_count=g.clip_count;if(g.clip_mode)config.clip_mode=g.clip_mode;if(g.clip_filters)config.clip_filters=g.clip_filters;
+    const parts=config.audio_parts?.length?config.audio_parts:[config];
+    for(const p of g.parts||[]){const t=parts[p.part-1];if(!t)continue;
+      t.shot_overrides=[...(t.shot_overrides||[]).filter(o=>!p.force_cameras.some(f=>f.start<o.end&&o.start<f.end)),...p.force_cameras.map(f=>({start:f.start,end:f.end,camera_id:f.camera}))].sort((a,b)=>a.start-b.start);
+      for(const k of ['drops','breakdowns'])if(p[k].length)t[k]=[...(t[k]||[]),...p[k]];if(p.no_clips.length)t.clip_excludes=[...(t.clip_excludes||[]),...p.no_clips];}
+    return config;}
+  function showAIResult(summary,changes,error){const host=$('ai-result');host.replaceChildren();host.hidden=false;host.classList.toggle('error',!!error);host.append(textEl('p',summary));if(changes?.length){const list=document.createElement('ul');for(const line of changes)list.append(textEl('li',line));host.append(list);}}
+  $('ai-toggle').addEventListener('click',()=>setAIMode($('ai-toggle').getAttribute('aria-pressed')!=='true'));
+  $('ai-provider').addEventListener('change',updateAIFields);
+  $('ai-key-save').addEventListener('click',async()=>{try{const r=await api('/api/ai/key',{key:$('ai-key').value});$('ai-key').value='';aiState.providers={...aiState.providers,openrouter:r.openrouter};updateAIFields();toast(r.openrouter?'OpenRouter key saved on the studio.':'OpenRouter key removed.');}catch(error){showError(error);}});
+  $('ai-apply').addEventListener('click',async()=>{const button=$('ai-apply');try{if(state.activeAudio)state.audioTimings.set(state.activeAudio,captureAudioTiming());const project=collectConfig(false,false);
+      button.disabled=true;button.textContent='Asking the AI…';$('ai-result').hidden=true;
+      const r=await api('/api/ai/guide',{provider:$('ai-provider').value,model:$('ai-model').value.trim(),prompt:$('ai-prompt').value,project});
+      aiState.snapshot=JSON.parse(JSON.stringify(project));applyConfig(applyGuidance(JSON.parse(JSON.stringify(project)),r.guidance));
+      $('ai-undo').hidden=false;showAIResult(r.guidance.summary,r.changes.length?r.changes:['No settings needed to change.']);toast('AI guidance applied. Build a preview plan to see it.');}
+    catch(error){showAIResult(error.message,[],true);}finally{button.disabled=false;button.textContent='Apply guidance';}});
+  $('ai-undo').addEventListener('click',()=>{if(!aiState.snapshot)return;applyConfig(aiState.snapshot);aiState.snapshot=null;$('ai-undo').hidden=true;showAIResult('Undone. Your settings are back as they were.',[]);});
+  try{if(localStorage.getItem('multicam-ai-mode')==='1')setAIMode(true);}catch{}
   $('sign-out').addEventListener('click', async () => { try { saveLocalDraft(); } catch {} await fetch('/api/logout', {method: 'POST'}).catch(() => {}); location.href = '/login'; });
 
   function renderFiles(target) {

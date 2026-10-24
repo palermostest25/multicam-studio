@@ -1,5 +1,12 @@
 # Changes
 
+## 2.8.0
+
+- **AI mode** (optional; off by default, so nothing changes unless you turn it on). Turn it on with the **AI mode** button (browser header; Mac toolbar, View ▸ AI Mode or Settings) and an AI panel appears. Describe what you want (“more of camera C in the drops, no clips from the first two minutes, black and white breakdowns”) and choose who answers:
+  - **Claude Code** or **Codex**, using the app signed in with your subscription on the studio machine (or this Mac), or
+  - **OpenRouter** with an API key (saved on the studio, or in the Mac's Keychain; Docker can also take `MULTICAM_OPENROUTER_KEY`).
+  The AI only fills in the settings you could set by hand (main camera, screen time, pace, forced cameras, drops and breakdowns, no-clip ranges, clip lengths, count and filters), so the engine makes every cut in the same style. Nothing changes until you apply, and **Undo** restores your settings.
+
 ## 2.7.0
 
 - **Filters for social clips**, automatic by default: *Auto mix* makes about a third of the clips black and white (Noir or Silver, the calmer moments) and gives the rest varied colour looks (Original, Vivid, Vintage, Warm, Super 8, Faded film). You can also turn filters off or give every clip one look. The full edit is unaffected; the alternatives use the same look as their clip.

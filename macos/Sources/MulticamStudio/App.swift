@@ -86,8 +86,12 @@ struct SettingsView: View {
     @EnvironmentObject var state: AppState
     @AppStorage(Appearance.key) private var glass = true
     @AppStorage(Updater.automaticKey) private var checkForUpdates = true
+    @AppStorage(AIMode.key) private var aiMode = false
     var body: some View {
         Form {
+            Toggle("AI mode", isOn: $aiMode)
+            Text("Adds an AI tab where you describe what you want; off, the app works exactly as before.")
+                .font(.caption).foregroundStyle(.secondary)
             Toggle("Check for updates automatically", isOn: $checkForUpdates)
             LabeledContent("Version \(Updater.shared.currentVersion)") {
                 Button("Check Now") { Task { await Updater.shared.check(userInitiated: true) } }
@@ -118,8 +122,11 @@ struct SettingsView: View {
 
 struct AppearanceMenu: View {
     @AppStorage(Appearance.key) private var glass = true
+    @AppStorage(AIMode.key) private var aiMode = false
     var body: some View {
         Toggle("Liquid Glass", isOn: $glass)
             .keyboardShortcut("g", modifiers: [.command, .option])
+        Toggle("AI Mode", isOn: $aiMode)
+            .keyboardShortcut("i", modifiers: [.command, .option])
     }
 }

@@ -10,7 +10,7 @@
 <body>
 <header class="app-header">
   <a class="brand" href="/" aria-label="Multicam Studio home"><span class="brand-icon" aria-hidden="true"><i></i><i></i></span><span>Multicam <strong>Studio</strong></span></a>
-  <div class="header-right"><span class="local-badge"><span></span> LOCAL WORKSPACE</span><button class="quiet" id="save-settings">Save project</button><button class="quiet" id="load-settings">Load project</button><button class="quiet" id="open-preferences" aria-haspopup="dialog">Settings</button><button class="quiet" id="sign-out" hidden>Sign out</button><input type="file" id="settings-file" accept=".json,application/json" hidden></div>
+  <div class="header-right"><span class="local-badge"><span></span> LOCAL WORKSPACE</span><button class="quiet" id="save-settings">Save project</button><button class="quiet" id="load-settings">Load project</button><button class="quiet" id="ai-toggle" aria-pressed="false" title="Turn AI mode on or off">AI mode</button><button class="quiet" id="open-preferences" aria-haspopup="dialog">Settings</button><button class="quiet" id="sign-out" hidden>Sign out</button><input type="file" id="settings-file" accept=".json,application/json" hidden></div>
 </header>
 <nav class="studio-tabs" aria-label="Studio tools"><button type="button" data-page="edit" aria-selected="true">01 <span>Multicam edit</span></button><button type="button" data-page="highlights" aria-selected="false">02 <span>Highlights</span></button><button type="button" data-page="effects" aria-selected="false">03 <span>Effects</span></button><button type="button" data-page="files" aria-selected="false" id="files-tab" hidden>04 <span>Files</span></button></nav>
 <div id="error-banner" class="notice error global-error" role="alert" hidden><span></span><button type="button" class="icon-button" aria-label="Dismiss error">×</button></div>
@@ -18,6 +18,15 @@
 <main class="workspace" id="edit-page">
 <aside class="controls" aria-label="Edit settings">
   <div class="intro"><div class="eyebrow">EVERY ANGLE. ONE PERFORMANCE.</div><h1>Make the cut.</h1><p>Sync to your audio, choose the rhythm, and render your set.</p><p id="autosave-status" class="autosave-note" role="status">Local drafts remember your file paths and settings.</p></div>
+  <section class="panel ai-panel" id="ai-panel" hidden aria-labelledby="ai-title"><div class="section-heading"><span class="step">AI</span><h2 id="ai-title">AI guidance</h2><span class="subtle">AI MODE</span></div>
+    <p class="help">Say what you want in plain words. The AI turns it into the same settings you would choose by hand, so the cuts keep their style. Nothing changes until you apply, and Undo puts everything back.</p>
+    <div class="grid-two"><label>AI<select id="ai-provider"><option value="claude">Claude Code · your subscription</option><option value="codex">Codex · your subscription</option><option value="openrouter">OpenRouter · API key</option></select></label><label id="ai-model-row">Model (optional)<input id="ai-model" type="text" placeholder="Default" autocomplete="off"></label></div>
+    <label id="ai-key-row" hidden>OpenRouter API key<span class="input-action"><input id="ai-key" type="password" placeholder="Saved on the studio, never shown again" autocomplete="off"><button type="button" id="ai-key-save" class="small">Save</button></span></label>
+    <p class="help" id="ai-provider-note"></p>
+    <label>What do you want?<textarea id="ai-prompt" rows="4" placeholder="More of camera C in the drops, no social clips from the first two minutes, black and white for the breakdown clips"></textarea></label>
+    <div class="ai-actions"><button type="button" id="ai-apply">Apply guidance</button><button type="button" id="ai-undo" class="quiet" hidden>Undo</button></div>
+    <div id="ai-result" class="ai-result" role="status" hidden></div>
+  </section>
   <form id="edit-form">
   <section class="panel" aria-labelledby="sources-title"><div class="section-heading"><span class="step">01</span><h2 id="sources-title">Source files</h2><span class="subtle">MOV · MP4</span></div>
     <div id="camera-cards"></div><button type="button" id="add-camera" class="small add-camera">+ Add camera</button>

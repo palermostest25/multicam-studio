@@ -300,6 +300,42 @@ class ServerTests(unittest.TestCase):
                     server.validate_config({**base, **bad})
 
 
+class AIGuidanceTests(unittest.TestCase):
+    context = {'parts': [{'part': 1, 'duration': 600}, {'part': 2, 'duration': 300}],
+               'cameras': [{'id': 'A'}, {'id': 'C'}]}
+
+    def test_validate_keeps_only_sane_values(self):
+        import ai
+        raw = {'summary': 'More C in drops', 'main_camera': 'Z', 'main_share': 1.4, 'pace': 0.1,
+               'clip_lengths': [15, 15, 2, 400, 30], 'clip_count': 99, 'clip_mode': 'random', 'clip_filters': 'noir',
+               'parts': [{'part': 1, 'force_cameras': [{'start': 60, 'end': 75, 'camera': 'C'}, {'start': 1, 'end': 9, 'camera': 'Q'}],
+                          'no_clips': [[0, 120], [500, 900], [5, 5.1]], 'drops': [], 'breakdowns': []},
+                         {'part': 7, 'force_cameras': [], 'no_clips': [[0, 10]], 'drops': [], 'breakdowns': []},
+                         {'part': True, 'no_clips': [[0, 10]]}]}
+        g = ai.validate(raw, self.context)
+        self.assertNotIn('main_camera', g)                      # unknown camera
+        self.assertEqual((g['main_share'], g['pace']), (0.9, 0.4))  # clamped
+        self.assertEqual(g['clip_lengths'], [3, 15, 30, 180])
+        self.assertEqual(g['clip_count'], 50)
+        self.assertNotIn('clip_mode', g)
+        self.assertEqual(g['clip_filters'], 'noir')
+        self.assertEqual(len(g['parts']), 1)
+        part = g['parts'][0]
+        self.assertEqual(part['force_cameras'], [{'start': 60.0, 'end': 75.0, 'camera': 'C'}])
+        self.assertEqual(part['no_clips'], [[0.0, 120.0], [500.0, 600.0]])   # clamped to the part, tiny range dropped
+        self.assertTrue(ai.describe(g))
+
+    def test_parse_finds_json_in_chatty_answers(self):
+        import ai
+        self.assertEqual(ai.parse('Sure! ```json\n{"summary": "x", "parts": []}\n``` hope that helps')['summary'], 'x')
+        with self.assertRaises(ai.AIError):
+            ai.parse('no json here')
+        with self.assertRaises(ai.AIError):
+            ai.ask('openrouter', 'hi', self.context, key='')
+        with self.assertRaises(ai.AIError):
+            ai.ask('gpt', 'hi', self.context)
+
+
 class SignInTests(unittest.TestCase):
     def test_sessions_and_lockout(self):
         import server
