@@ -172,6 +172,7 @@ final class AppState: ObservableObject {
             if let part = parts.first {
                 p.overrides = part.overrides; p.shotOverrides = part.shotOverrides
                 p.drops = part.drops; p.breakdowns = part.breakdowns; p.activities = part.activities
+                p.clipExcludes = part.clipExcludes
             }
             project = p
         } else {
@@ -258,6 +259,14 @@ final class AppState: ObservableObject {
     func addMarker(start: Double, end: Double, kind: String) {
         updatePart { part in
             if kind == "drop" { part.drops.append([start, end]) } else { part.breakdowns.append([start, end]) }
+        }
+    }
+
+    /// Keep social clips out of a stretch of the set (the full edit is unaffected).
+    func excludeFromClips(start: Double, end: Double) {
+        updatePart { part in
+            part.clipExcludes.append([start, end])
+            part.clipExcludes.sort { $0[0] < $1[0] }
         }
     }
 

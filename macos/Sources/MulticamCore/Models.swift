@@ -81,10 +81,12 @@ public struct AudioPart: Codable, Hashable, Identifiable, Sendable {
     public var drops: [[Double]] = []
     public var breakdowns: [[Double]] = []
     public var activities: [Double] = []
+    /// Ranges (audio seconds) that social clips must never come from.
+    public var clipExcludes: [[Double]] = []
     public init(path: String) { self.path = path }
     enum CodingKeys: String, CodingKey {
         case path, overrides, drops, breakdowns, activities
-        case shotOverrides = "shot_overrides"
+        case shotOverrides = "shot_overrides", clipExcludes = "clip_excludes"
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -94,6 +96,7 @@ public struct AudioPart: Codable, Hashable, Identifiable, Sendable {
         drops = (try? c.decode([[Double]].self, forKey: .drops)) ?? []
         breakdowns = (try? c.decode([[Double]].self, forKey: .breakdowns)) ?? []
         activities = (try? c.decode([Double].self, forKey: .activities)) ?? []
+        clipExcludes = (try? c.decode([[Double]].self, forKey: .clipExcludes)) ?? []
     }
 }
 
@@ -188,6 +191,7 @@ public struct Project: Codable, Hashable, Sendable {
     public var overwrite = false
     public var drops: [[Double]] = []
     public var breakdowns: [[Double]] = []
+    public var clipExcludes: [[Double]] = []
     public var activities: [Double] = []
     public var overrides: [SyncOverride] = []
     public var shotOverrides: [ShotOverride] = []
@@ -223,7 +227,7 @@ public struct Project: Codable, Hashable, Sendable {
         case fullEdit = "full_edit", clipCount = "clip_count", clipMode = "clip_mode"
         case clipAspect = "clip_aspect", clipResolution = "clip_resolution", clipFade = "clip_fade"
         case clipLengths = "clip_lengths", clipFraming = "clip_framing", engine, clipAlternatives = "clip_alternatives"
-        case mode, clipsOnly = "clips_only"
+        case mode, clipsOnly = "clips_only", clipExcludes = "clip_excludes"
     }
 
     public init(from decoder: Decoder) throws {
@@ -249,6 +253,7 @@ public struct Project: Codable, Hashable, Sendable {
         overwrite = value(.overwrite, false)
         drops = value(.drops, [])
         breakdowns = value(.breakdowns, [])
+        clipExcludes = value(.clipExcludes, [])
         activities = value(.activities, [])
         overrides = value(.overrides, [])
         shotOverrides = value(.shotOverrides, [])
@@ -299,6 +304,7 @@ public struct Project: Codable, Hashable, Sendable {
         try c.encode(overwrite, forKey: .overwrite)
         try c.encode(drops, forKey: .drops)
         try c.encode(breakdowns, forKey: .breakdowns)
+        try c.encode(clipExcludes, forKey: .clipExcludes)
         try c.encode(activities, forKey: .activities)
         try c.encode(overrides, forKey: .overrides)
         try c.encode(shotOverrides, forKey: .shotOverrides)
@@ -337,6 +343,7 @@ public struct Project: Codable, Hashable, Sendable {
         var part = AudioPart(path: audio)
         part.overrides = overrides; part.shotOverrides = shotOverrides
         part.drops = drops; part.breakdowns = breakdowns; part.activities = activities
+        part.clipExcludes = clipExcludes
         return part.path.isEmpty ? [] : [part]
     }
 

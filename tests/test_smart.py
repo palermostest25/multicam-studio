@@ -123,6 +123,16 @@ class PlannerTests(unittest.TestCase):
         sequence = planner.choose_clips(windows, 0, 'sequence')
         self.assertTrue(all(a['end'] <= b['start'] + 1e-6 for a, b in zip(sequence, sequence[1:])))
 
+    def test_clip_excludes_keep_windows_out(self):
+        info = self.music()
+        total = 96 * self.fps
+        cams = [Cam('A', 0, total)]
+        windows = planner.window_scores(info, cams, total, self.fps, 15, excludes=[(20, 40)])
+        self.assertTrue(windows)
+        self.assertTrue(all(w['end'] <= 20 or w['start'] >= 40 for w in windows))
+        everything = planner.window_scores(info, cams, total, self.fps, 15)
+        self.assertGreater(len(everything), len(windows))
+
     def test_clips_end_on_the_beat_or_at_the_bar_line(self):
         info = self.music()
         total = 96 * self.fps

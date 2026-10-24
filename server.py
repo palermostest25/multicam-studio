@@ -50,7 +50,7 @@ else:
     import fcntl
 
 APP = Path(__file__).resolve().parent
-VERSION = '2.5.0'
+VERSION = '2.6.0'
 APP_ID = 'com.multicamstudio.desktop'
 DISCONNECTS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)
 _RUNNING_SERVER = None
@@ -274,7 +274,7 @@ def validate_config(raw):
         c[key]=[finite(v,key,.1,3600) for v in pair]
         if c[key][0]>c[key][1]:
             raise ValueError(f'{key}: minimum cannot exceed maximum.')
-    for key in ('drops','breakdowns'):
+    for key in ('drops','breakdowns','clip_excludes'):
         values=c.get(key,[])
         if not isinstance(values,list) or len(values)>1000:
             raise ValueError(f'Invalid {key} markers.')
@@ -364,7 +364,7 @@ def command_for(c, report):
     for key in ('a_center','b_center','main_hold','cutaway_hold','drop_hold','breakdown_hold'):
         cmd += ['--'+key.replace('_','-')]+list(map(str,c[key]))
     if c['output_name']: cmd += ['--output-name',c['output_name']]
-    for key,flag in [('drops','--drop'),('breakdowns','--breakdown')]:
+    for key,flag in [('drops','--drop'),('breakdowns','--breakdown'),('clip_excludes','--clip-exclude')]:
         for a,b in c[key]: cmd += [flag,f'{a},{b}']
     for t in c['activities']: cmd += ['--activity',str(t)]
     for item in c['overrides']:

@@ -1,5 +1,9 @@
 # Changes
 
+## 2.6.0
+
+- **No social clips here**: drag across the timeline (Mac) or select in the waveform (browser) and choose “No social clips here”, and social clips will never be taken from that stretch. Each audio excerpt keeps its own list (Mac: Export tab; browser: Social clips panel). The full edit is unaffected.
+
 ## 2.5.0
 
 - Mac app **updates itself**: it checks for a new release every few hours (or Multicam Studio ▸ Check for Updates…), then downloads, verifies and installs it and relaunches. Turn automatic checks off in Settings.

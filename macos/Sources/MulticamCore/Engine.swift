@@ -328,7 +328,8 @@ public final class Engine: @unchecked Sendable {
         let forced = shots.filter { $0.reason == "manual shot override" }
         for length in project.socialLengths {
             let windows = Planner.windows(music: analysis.music, cameras: cover, total: total, fps: fps,
-                                          length: length, scores: scores, ending: project.engine.clipEnding)
+                                          length: length, scores: scores, ending: project.engine.clipEnding,
+                                          excludes: analysis.part.clipExcludes)
             let chosen = Planner.choose(windows, count: project.clipCount, mode: project.clipMode)
             for (i, w) in chosen.enumerated() {
                 let range = Int((w.start * Double(fps)).rounded())..<Int((w.end * Double(fps)).rounded())

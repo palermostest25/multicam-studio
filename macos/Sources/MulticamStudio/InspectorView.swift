@@ -291,6 +291,17 @@ struct ExportSettings: View {
                      ? "Lengths are a guide: a 15 s clip is 8 bars, then it lands the next downbeat and lets it ring for a beat (about 15½ s at 128 BPM). Engine 1 stops at the bar line instead."
                      : "Lengths are a guide: a 15 s clip is 8 bars and stops right at the next bar line (Engine 1). Engine 2 lands the next downbeat.")
                     .font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("No social clips from")
+                    if let part = state.currentPart, !part.clipExcludes.isEmpty {
+                        ForEach(Array(part.clipExcludes.enumerated()), id: \.offset) { i, range in
+                            MarkerRow(kind: "Excluded", range: range) { state.updatePart { $0.clipExcludes.remove(at: i) } }
+                        }
+                    } else {
+                        Text("Drag across the timeline and choose “No social clips here” to keep clips out of a stretch.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 Toggle("Social media alternatives", isOn: $state.project.clipAlternatives)
                 Text("Clips that use a vertical recording are also saved twice with black bars in Social media alternatives: in 16:9 with bars beside the vertical shots, and in 9:16 with bars above and below the wide shots.")
                     .font(.caption).foregroundStyle(.secondary)

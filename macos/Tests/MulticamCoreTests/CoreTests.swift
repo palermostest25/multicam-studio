@@ -103,6 +103,21 @@ final class PlannerTests: XCTestCase {
         XCTAssertLessThanOrEqual(best[0].end, best[1].start + 1e-6)
     }
 
+    func testClipExcludesKeepWindowsOut() {
+        let music = MusicAnalysis.analyse(danceTrack())
+        let total = 96 * fps
+        let cams = [Coverage(angle: "A", first: 0, last: total)]
+        let scores = Planner.scores(steps: Planner.steps(total: total, fps: fps), vision: [nil])
+        let kept = Planner.windows(music: music, cameras: cams, total: total, fps: fps, length: 15, scores: scores, excludes: [[20, 40]])
+        let all = Planner.windows(music: music, cameras: cams, total: total, fps: fps, length: 15, scores: scores)
+        XCTAssertFalse(kept.isEmpty)
+        XCTAssertTrue(kept.allSatisfy { $0.end <= 20 || $0.start >= 40 })
+        XCTAssertGreaterThan(all.count, kept.count)
+        var part = AudioPart(path: "/x.wav"); part.clipExcludes = [[1, 2]]
+        let decoded = try! JSONDecoder().decode(AudioPart.self, from: JSONEncoder().encode(part))
+        XCTAssertEqual(decoded.clipExcludes, [[1, 2]])
+    }
+
     func testClipsEndOnTheBeatOrAtTheBarLine() {
         let music = MusicAnalysis.analyse(danceTrack())
         let total = 96 * fps
