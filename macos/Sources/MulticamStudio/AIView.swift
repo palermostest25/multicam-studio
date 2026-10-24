@@ -43,8 +43,10 @@ struct AISettings: View {
             Picker("AI", selection: $provider) {
                 ForEach(AIGuide.Provider.allCases) { Text($0.title).tag($0.rawValue) }
             }
+            .onChange(of: provider) { state.aiResult = nil }
             TextField(choice == .openrouter ? AIGuide.defaultOpenRouterModel : "Model (optional, default)", text: $model)
                 .help("Leave empty for the default model")
+                .onChange(of: model) { if state.aiResult?.failed == true { state.aiResult = nil } }
             switch choice {
             case .openrouter:
                 HStack {
@@ -58,7 +60,7 @@ struct AISettings: View {
                 }
                 Text("The key is kept in your Keychain, not in the project.").font(.caption).foregroundStyle(.secondary)
             case .claude:
-                Text("Uses the Claude Code app signed in on this Mac. If it asks you to sign in, run “claude” once in Terminal.")
+                Text("Uses the claude command-line tool on this Mac, which has its own sign-in (separate from the Claude app). To sign it in, run “claude auth login” in Terminal.")
                     .font(.caption).foregroundStyle(.secondary)
             case .codex:
                 Text("Uses the Codex app signed in on this Mac. If it asks you to sign in, run “codex login” in Terminal.")

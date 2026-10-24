@@ -51,7 +51,7 @@ else:
     import fcntl
 
 APP = Path(__file__).resolve().parent
-VERSION = '2.8.0'
+VERSION = '2.8.1'
 APP_ID = 'com.multicamstudio.desktop'
 DISCONNECTS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)
 _RUNNING_SERVER = None

@@ -1,5 +1,10 @@
 # Changes
 
+## 2.8.1
+
+- AI mode: the Claude Code and Codex tools no longer pick up settings from a Claude Code session the app happened to be started from. When the claude tool's own sign-in has expired (it is separate from the Claude app), the message now says to run `claude auth login`.
+- AI mode: an error message clears when you switch provider or change the model.
+
 ## 2.8.0
 
 - **AI mode** (optional; off by default, so nothing changes unless you turn it on). Turn it on with the **AI mode** button (browser header; Mac toolbar, View ▸ AI Mode or Settings) and an AI panel appears. Describe what you want (“more of camera C in the drops, no clips from the first two minutes, black and white breakdowns”) and choose who answers:

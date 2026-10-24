@@ -143,6 +143,13 @@ Keep forced ranges to what was asked for: the engine's own choices are usually b
             shell.waitUntilExit()
         }
         if let path = lines.first, !path.isEmpty { environment["PATH"] = path }
+        // Drop what a Claude Code session passes to its children: it points the tool at that session
+        // instead of your own sign-in (same rule as ai.cli_environment).
+        let insideSession = environment["CLAUDECODE"] != nil
+        for name in environment.keys where name.hasPrefix("CLAUDE_CODE_") || name.hasPrefix("CLAUDE_AGENT_SDK")
+            || ["CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "AI_AGENT"].contains(name) || (insideSession && name == "ANTHROPIC_BASE_URL") {
+            environment[name] = nil
+        }
         if lines.count > 1, FileManager.default.isExecutableFile(atPath: lines[1]) { return (lines[1], environment) }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         for folder in ["\(home)/.local/bin", "\(home)/.npm-global/bin", "\(home)/.bun/bin", "\(home)/.claude/local", "/opt/homebrew/bin", "/usr/local/bin"] {
@@ -183,7 +190,9 @@ Keep forced ranges to what was asked for: the engine's own choices are usually b
             }
             if envelope["is_error"] as? Bool == true {
                 var message = (envelope["result"] as? String) ?? "Claude Code returned an error."
-                if message.lowercased().contains("authenticat") || message.contains("401") { message += " Open Terminal and run \"claude\" to sign in again." }
+                if message.lowercased().contains("authenticat") || message.contains("401") {
+                    message = "Claude Code’s own sign-in on this Mac has expired (it is separate from the Claude app). Open Terminal, run \"claude auth login\", then try again."
+                }
                 throw Failure(message)
             }
             if let structured = envelope["structured_output"] as? [String: Any],
