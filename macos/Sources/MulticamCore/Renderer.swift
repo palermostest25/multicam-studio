@@ -166,7 +166,14 @@ public enum Renderer {
         let folder = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let temporary = folder.appendingPathComponent(".\(UUID().uuidString).\(url.pathExtension)")
-        defer { try? FileManager.default.removeItem(at: temporary) }
+        defer {
+            try? FileManager.default.removeItem(at: temporary)
+            // AVAssetWriter can leave a "<temporary>.sb-…" save file behind; it is never needed.
+            let prefix = temporary.lastPathComponent
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasPrefix(prefix) {
+                try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
+            }
+        }
         let reader = try AVAssetReader(asset: edit.composition)
         let videoTracks = edit.composition.tracks(withMediaType: .video)
         let videoOutput = AVAssetReaderVideoCompositionOutput(videoTracks: videoTracks, videoSettings: [

@@ -41,6 +41,7 @@ import traceback
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse, quote
+from looks import STYLES as LOOK_STYLES
 import webbrowser
 
 WINDOWS = os.name == 'nt'
@@ -50,7 +51,7 @@ else:
     import fcntl
 
 APP = Path(__file__).resolve().parent
-VERSION = '2.6.1'
+VERSION = '2.7.0'
 APP_ID = 'com.multicamstudio.desktop'
 DISCONNECTS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError)
 _RUNNING_SERVER = None
@@ -143,8 +144,7 @@ def validate_config(raw):
     if not isinstance(raw, dict):
         raise ValueError('Expected editing settings.')
     c = dict(raw)
-    c.pop('clips_dir', None)  # set only by audio_batch, never by the browser
-    c.pop('alternatives_dir', None);c.pop('alternatives_part', None)
+    for key in ('clips_dir','alternatives_dir','alternatives_part'):c.pop(key,None)  # legacy keys, never from the browser
     all_inputs = []
     cameras = c.get('cameras')
     if cameras is not None:
@@ -226,7 +226,8 @@ def validate_config(raw):
                                   ('container',{'mp4','mov'},'mp4'),('encoder',{'auto','hardware','software'},'auto'),
                                   ('planner',{'smart','classic'},'smart'),('vision',{'auto','on','off'},'auto'),
                                   ('clip_mode',{'best','sequence'},'best'),('clip_aspect',aspects,'9:16'),
-                                  ('clip_framing',{'smart','fit','bars','crop','same'},'smart')]:
+                                  ('clip_framing',{'smart','fit','bars','crop','same'},'smart'),
+                                  ('clip_filters',{'off','auto',*LOOK_STYLES},'auto')]:
         c[key] = c.get(key,default)
         if c[key] not in choices:
             raise ValueError(f'Invalid {key.replace("_"," ")}.')
@@ -351,11 +352,8 @@ def command_for(c, report):
     for key in ('mode','main_camera','main_share','seed','fps','cut_scale','crf','preset','aspect','resolution',
                 'codec','container','encoder','planner','vision','jobs','engine'):
         if key in c:cmd += ['--'+key.replace('_','-'),str(c[key])]
-    if c.get('clips_dir'):cmd += ['--clips-dir',c['clips_dir']]
-    if c.get('alternatives_dir'):cmd += ['--alternatives-dir',c['alternatives_dir']]
-    if c.get('alternatives_part'):cmd += ['--alternatives-part',c['alternatives_part']]
     if c.get('clips'):
-        cmd += ['--clips',','.join(f'{x:g}' for x in c.get('clip_lengths') or [c['clips']]),'--clip-framing',c.get('clip_framing','smart'),
+        cmd += ['--clips',','.join(f'{x:g}' for x in c.get('clip_lengths') or [c['clips']]),'--clip-framing',c.get('clip_framing','smart'),'--clip-filters',c.get('clip_filters','auto'),
                 '--clip-count',str(c['clip_count']),'--clip-mode',c['clip_mode'],
                 '--clip-aspect',c['clip_aspect'],'--clip-resolution',str(c['clip_resolution']),'--clip-fade',str(c['clip_fade'])]
         if c.get('clips_only'):cmd.append('--clips-only')
@@ -695,7 +693,7 @@ class Studio:
         return folder
 
     def library(self):
-        """Files in the recordings and exports folders (three levels deep), for server mode."""
+        """Files in the recordings and exports folders (five levels deep, enough for Social media alternatives/<shape>/<set>/<L>s), for server mode."""
         result={}
         for key,folder in self.library_folders().items():
             items=[]
@@ -707,7 +705,7 @@ class Studio:
                     if child.name.startswith('.') or child.name.endswith('.uploading'):continue
                     try:
                         if child.is_dir() and not child.is_symlink():
-                            if depth<3:walk(child,depth+1)
+                            if depth<5:walk(child,depth+1)
                         elif child.is_file():entries.append(child)
                     except OSError:continue
             if folder.is_dir():walk(folder,1)

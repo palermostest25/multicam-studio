@@ -447,6 +447,7 @@ final class AppState: ObservableObject {
         previewTask = Task {
             let shots: [Shot], window: Range<Int>, aspect: Aspect
             var fadeOut = 0.0
+            var look = project.look
             var sources = Engine.currentSources(analysis, project: project)
             switch target {
             case .full:
@@ -457,11 +458,12 @@ final class AppState: ObservableObject {
                 window = Int((clip.window.start * Double(plan.fps)).rounded())..<Int((clip.window.end * Double(plan.fps)).rounded())
                 aspect = project.clipAspect
                 fadeOut = Engine.clipFadeOut(clip.window)
+                look = Engine.clipLook(clip, project: project)
                 sources = Engine.clipSources(sources, aspect: aspect, mode: project.clipFraming)
             }
             // Preview at screen size: the same compositor as the export, just fewer pixels.
             let size = aspect.size(resolution: aspect == .landscape ? 540 : 720)
-            let spec = OutputSpec(width: size.width, height: size.height, fps: plan.fps, codec: .h264, look: project.look)
+            let spec = OutputSpec(width: size.width, height: size.height, fps: plan.fps, codec: .h264, look: look)
             do {
                 let edit = try await Renderer.prepare(shots: shots, clips: sources, bounce: URL(fileURLWithPath: analysis.part.path),
                                                       window: window, spec: spec, audioFade: target == .full ? 0 : project.clipFade,
@@ -524,16 +526,13 @@ final class AppState: ObservableObject {
                         analyses[part.path] = analysis
                     }
                     let plan = try Engine.plan(project: project, analysis: analysis!)
-                    let folder = Engine.outputFolder(project: project, partIndex: i + 1, partCount: parts.count, part: part)
-                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    let paths = Engine.exportPaths(project: project, partIndex: i + 1, partCount: parts.count, part: part)
+                    try FileManager.default.createDirectory(at: paths.files, withIntermediateDirectories: true)
                     try Engine.cutList(project: project, analysis: analysis!, plan: plan)
-                        .write(to: folder.appendingPathComponent("\(Engine.baseName(project))_cut_list.txt"), atomically: true, encoding: .utf8)
+                        .write(to: paths.files.appendingPathComponent("Cut list.txt"), atomically: true, encoding: .utf8)
                     let partLabel = parts.count > 1 ? "Audio \(i + 1)/\(parts.count) · " : ""
                     let base = Double(i) / Double(parts.count)
-                    let social = Engine.socialFolder(project: project, partIndex: i + 1, partCount: parts.count, part: part)
-                    let outputs = try await engine.render(project: project, analysis: analysis!, plan: plan, folder: folder,
-                                                          clipFolder: social,
-                                                          alternativesFolders: Engine.alternativeFolders(project: project, partIndex: i + 1, partCount: parts.count, part: part)) { [weak self] title, fraction in
+                    let outputs = try await engine.render(project: project, analysis: analysis!, plan: plan, paths: paths) { [weak self] title, fraction in
                         Task { @MainActor in
                             self?.status = "\(partLabel)\(title)"
                             self?.progress = base + fraction / Double(parts.count)

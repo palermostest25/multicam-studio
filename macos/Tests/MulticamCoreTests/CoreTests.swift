@@ -318,18 +318,22 @@ final class EndToEndTests: XCTestCase {
         XCTAssertEqual(plan.clips.count, 4)
         XCTAssertTrue(plan.matches(analysis))
         XCTAssertEqual(Set(plan.clips.map(\.length)), [7, 10])
-        let outputs = try await engine.render(project: project, analysis: analysis, plan: plan,
-                                              folder: URL(fileURLWithPath: project.outputDir)) { _, _ in }
+        let paths = Engine.exportPaths(project: project, partIndex: 1, partCount: 1, part: project.parts[0])
+        let outputs = try await engine.render(project: project, analysis: analysis, plan: plan, paths: paths) { _, _ in }
         XCTAssertEqual(outputs.count, 5)   // no vertical recordings: no alternatives
-        let out = URL(fileURLWithPath: project.outputDir)
-        let alternatives = Engine.outputs(project: project, plan: plan, folder: out, vertical: [0]).filter { $0.kind == "alternative" }
+        let setName = paths.setName
+        XCTAssertEqual(outputs.first { $0.kind == "full" }?.url.path,
+                       URL(fileURLWithPath: project.outputDir).appendingPathComponent("Full sets/\(setName).mp4").path)
+        XCTAssertTrue(plan.clips.allSatisfy { $0.look != .none } || plan.clips.contains { Engine.greyscaleLooks.contains($0.look) })
+        XCTAssertEqual(plan.clips.filter { Engine.greyscaleLooks.contains($0.look) }.count, 1)   // a third of 4, auto mix
+        let alternatives = Engine.outputs(project: project, plan: plan, paths: paths, vertical: [0]).filter { $0.kind == "alternative" }
         let withVertical = plan.clips.filter { $0.shots.contains { $0.camera == 0 } }.count
         XCTAssertEqual(alternatives.count, 2 * withVertical)
         XCTAssertFalse(alternatives.isEmpty)
         XCTAssertEqual(alternatives.filter { $0.aspect == .portrait && $0.url.path.contains("/Social media alternatives/Vertical (bars on wide shots)/") }.count, withVertical)
         XCTAssertEqual(alternatives.filter { $0.aspect == .landscape && $0.url.path.contains("/Social media alternatives/Landscape (bars on vertical shots)/") }.count, withVertical)
         var off = project; off.clipAlternatives = false
-        XCTAssertTrue(Engine.outputs(project: off, plan: plan, folder: out, vertical: [0]).allSatisfy { $0.kind != "alternative" })
+        XCTAssertTrue(Engine.outputs(project: off, plan: plan, paths: paths, vertical: [0]).allSatisfy { $0.kind != "alternative" })
         var tall = analysis.clips[0]; tall.info.orientedSize = CGSize(width: 1080, height: 1920)
         let vertical = Engine.alternativeSources([tall, analysis.clips[1]], shape: .portrait)
         XCTAssertEqual(vertical[0].framing.mode, .crop); XCTAssertEqual(vertical[0].framing.zoom, 1)
@@ -338,11 +342,13 @@ final class EndToEndTests: XCTestCase {
         XCTAssertEqual(landscape[0].framing.mode, .pad)
         XCTAssertEqual(landscape[1].framing.mode, .crop); XCTAssertEqual(landscape[1].framing.zoom, 1)
         XCTAssertEqual(Engine.clipFraming(analysis.clips[1].framing, info: analysis.clips[1].info, aspect: .portrait, mode: .bars).mode, .pad)
-        XCTAssertTrue(outputs.contains { $0.url.path.contains("/Social media/10s/") })
-        let parts = [AudioPart(path: "/x/set one.wav"), AudioPart(path: "/x/set two.wav")]
-        XCTAssertEqual(Engine.socialFolder(project: project, partIndex: 2, partCount: 2, part: parts[1]).path,
-                       URL(fileURLWithPath: project.outputDir).appendingPathComponent("Social media/part_002_set_two").path)
-        XCTAssertEqual(Engine.outputFolder(project: project, partIndex: 2, partCount: 2, part: parts[1]).lastPathComponent, "part_002_set_two")
+        XCTAssertTrue(outputs.contains { $0.url.path.contains("/Social media/\(setName)/10s/\(setName) - 10s - 0") })
+        XCTAssertTrue(alternatives.allSatisfy { $0.url.path.contains("/\(setName)/") })
+        var named = project; named.outputName = "Friday set"
+        XCTAssertEqual(Engine.setName(project: named, partIndex: 2, partCount: 3, part: AudioPart(path: "/x/a.wav")), "Friday set - Part 2")
+        XCTAssertEqual(Engine.setName(project: Project(), partIndex: 1, partCount: 1, part: AudioPart(path: "/x/26-09-26: 1.wav")), "26-09-26 1")
+        XCTAssertEqual(Engine.assignClipLooks(plan.clips, mode: "off", seed: 1), Array(repeating: .none, count: 4))
+        XCTAssertEqual(Engine.assignClipLooks(plan.clips, mode: "sepia", seed: 1), Array(repeating: .sepia, count: 4))
         for output in outputs {
             let asset = AVURLAsset(url: output.url)
             let track = try await asset.loadTracks(withMediaType: .video).first!
