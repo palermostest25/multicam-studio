@@ -378,9 +378,74 @@ def build_report(config, job_dir):
     }
 
 
+def demo_music(config, duration):
+    """A 124 BPM beat grid with a breakdown, build and drop every 64 bars (or at the marked drops)."""
+    beat = 60/124
+    beats = [round(k*beat, 3) for k in range(int(duration/beat)+1)]
+    downbeats = beats[::4]
+    bars = len(downbeats)
+    kinds = ['normal']*bars
+    marked = [round(a/(4*beat)) for a, _ in config.get('drops') or []]
+    starts = marked or list(range(48, bars, 64))
+    for d in starts:
+        for k in range(max(0, d-20), min(bars, d+16)):
+            kinds[k] = 'breakdown' if k < d-4 else 'build' if k < d else 'drop'
+    sections = []
+    for k, kind in enumerate(kinds):
+        a, b = downbeats[k], downbeats[k+1] if k+1 < bars else duration
+        if sections and sections[-1]['kind'] == kind:
+            sections[-1]['end'] = b
+        else:
+            sections.append({'start': a, 'end': b, 'kind': kind})
+    level = {'normal': 0.75, 'breakdown': 0.15, 'build': 0.4, 'drop': 1.0}
+    return {'bpm': 124.0, 'confidence': 0.9, 'beats': beats, 'downbeats': downbeats, 'bar_starts': downbeats,
+            'bar_energy': [level[k] for k in kinds], 'sections': sections,
+            'drops': [s['start'] for s in sections if s['kind'] == 'drop'], 'duration': duration}
+
+
+class DemoCamera:
+    def __init__(self, angle, first, last):
+        self.angle, self.first, self.last = angle, first, last
+
+
+def musical_demo_clips(config, duration, name):
+    """Engine 2: the real musical clip planner (planner.py is standard library only) on a demo beat grid."""
+    import planner
+    fps = int(config.get('fps') or 30)
+    total = round(duration*fps)
+    ids = [c['id'] for c in config.get('cameras') or []] or ['A', 'B']
+    first_clip = {c['id']: c['clips'][0]['path'] for c in config.get('cameras') or [] if c.get('clips')}
+    cameras = [DemoCamera(i, 0, total) for i in ids]
+    info = demo_music(config, duration)
+    lengths = config.get('clip_lengths') or ([config['clips']] if config.get('clips') else [15])
+    chosen = planner.social_clips(info, cameras, total, fps, int(config.get('clip_count') or 0),
+                                  config.get('clip_mode', 'best'), lengths, None, config.get('clip_excludes') or [])
+    sections = [s for s in info['sections'] if s['kind'] != 'normal']
+    short = planner.Rhythm(**{**planner.SHORT_FORM.__dict__, 'candidates': 6})
+    main = config.get('main_camera') if config.get('main_camera') in ids else ids[0]
+    clips = []
+    for number, w in enumerate(chosen, 1):
+        window = (round(w['start']*fps), round(w['end']*fps))
+        lead = planner.lead_camera(cameras, window[0], number-1, main)
+        plan = planner.plan(cameras, total, fps, info, sections, (), int(config.get('seed') or 42)+number, lead, short, window=window)
+        shots = [{'index': n, 'start_seconds': s.start/fps-w['start'], 'end_seconds': s.end/fps-w['start'],
+                  'angle': ids[s.camera], 'source_path': first_clip.get(ids[s.camera]), 'reason': s.reason}
+                 for n, s in enumerate(plan, 1)]
+        folder = Path(config['output_dir'])/'Social media'/name
+        clips.append({'index': number, 'number': number, 'length': round(w['end']-w['start'], 3),
+                      'kind': w['kind'], 'title': w['title'], 'bars': w['bars'], 'lead_camera': lead,
+                      'start': w['start'], 'end': w['end'], 'score': w['score'], 'tail': w['tail'],
+                      'duration': round(w['end']-w['start'], 3),
+                      'path': str(folder/f"{name} - {number:02d} - {int(w['start'])//60}m{int(w['start'])%60:02d}s - {w['title']}.mp4"),
+                      'rendered': False, 'shots': shots})
+    return clips
+
+
 def demo_clips(config, rows, duration, name):
     """Evenly spaced, whole-bar (124 BPM) social clips, as the smart planner reports them."""
     lengths = config.get('clip_lengths') or ([config['clips']] if config.get('clips') else [])
+    if lengths and int(config.get('engine') or 2) >= 2:
+        return musical_demo_clips(config, duration, name)
     bar = 4*60/124
     clips = []
     for requested in lengths:
