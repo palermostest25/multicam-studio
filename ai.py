@@ -33,8 +33,8 @@ with their shape; the current settings and markers) and a request from the DJ. R
 - "main_camera": a camera id to favour, or null to keep it.
 - "main_share": share of screen time for the main camera, 0.2 to 0.9, or null.
 - "pace": cutting speed, 0.4 (much slower) to 2.5 (much faster), 1 = normal, or null.
-- "clip_lengths": social clip lengths in seconds (e.g. [15, 30]), or null.
-- "clip_count": social clips per length (0 = as many as fit), or null.
+- "clip_lengths": social clip lengths in seconds (e.g. [15, 30]), or null. Engine 2 (the default) takes clip lengths from the music, so only Engine 1 uses them.
+- "clip_count": social clips per length with Engine 1, per set with Engine 2 (0 = as many as fit), or null.
 - "clip_mode": "best" (most energetic moments) or "sequence" (whole set in order), or null.
 - "clip_filters": "auto", "off" or one look (none, warm, cool, mono, vintage, vivid, noir, silver, sepia, super8, faded), or null.
 - "parts": a list with one entry per audio part you change: {"part": its number, "force_cameras": [{"start", "end", "camera"}],
@@ -300,7 +300,7 @@ def describe(guidance):
     if 'main_share' in guidance: lines.append(f"Main camera screen time: {round(guidance['main_share'] * 100)}%")
     if 'pace' in guidance: lines.append(f"Pace: {guidance['pace']}×")
     if 'clip_lengths' in guidance: lines.append('Clip lengths: ' + ', '.join(f'{n} s' for n in guidance['clip_lengths']))
-    if 'clip_count' in guidance: lines.append(f"Clips per length: {guidance['clip_count'] or 'as many as fit'}")
+    if 'clip_count' in guidance: lines.append(f"Clip count: {guidance['clip_count'] or 'as many as fit'}")
     if 'clip_mode' in guidance: lines.append('Clips: ' + ('best moments' if guidance['clip_mode'] == 'best' else 'whole set in order'))
     if 'clip_filters' in guidance: lines.append(f"Filters: {guidance['clip_filters']}")
     for part in guidance.get('parts', []):

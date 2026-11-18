@@ -247,7 +247,7 @@ struct ExportSettings: View {
             }
             TextField("Set name (optional)", text: $state.project.outputName)
             Toggle("Replace existing files", isOn: $state.project.overwrite)
-            Text("Full edits go in Full sets, social clips in Social media (a folder per set, then per length) and cut lists in Project files. Files are named after the audio, or the name above.")
+            Text("Full edits go in Full sets, social clips in Social media (one folder per set; Engine 1 adds a folder per length) and cut lists in Project files. Files are named after the audio, or the name above.")
                 .font(.caption).foregroundStyle(.secondary)
 
             Divider()
@@ -263,10 +263,11 @@ struct ExportSettings: View {
             })) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Social clips").font(.headline)
-                    Text("Reels, Shorts and TikTok at several lengths, in the Social media folder").font(.caption).foregroundStyle(.secondary)
+                    Text(state.project.engine == .one ? "Reels, Shorts and TikTok at several lengths, in the Social media folder"
+                         : "Reels, Shorts and TikTok cut to the music, in the Social media folder").font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if state.project.clips > 0 {
+            if state.project.clips > 0 && state.project.engine == .one {
                 Text("Lengths (each gets its own folder)").font(.caption).foregroundStyle(.secondary)
                 HStack(spacing: 6) {
                     ForEach([7.0, 15, 30, 60, 90], id: \.self) { length in
@@ -284,14 +285,16 @@ struct ExportSettings: View {
                     }
                 }
                 .glassGroup(spacing: 6)
+            }
+            if state.project.clips > 0 {
                 Picker("Framing", selection: $state.project.clipFraming) {
                     ForEach(ClipFraming.allCases) { Text($0.title).tag($0) }
                 }
                 Text("Cropping wide footage to vertical often cuts the DJ off. Smart and Fit show the whole picture over a blurred copy for shots that don’t match the clip shape; Black bars shows it with bars instead. The clips keep their quick, on-the-beat cuts.")
                     .font(.caption).foregroundStyle(.secondary)
                 Text(state.project.engine == .two
-                     ? "Lengths are a guide: a 15 s clip is 8 bars, then it lands the next downbeat and lets it ring for a beat (about 15½ s at 128 BPM). Engine 1 stops at the bar line instead."
-                     : "Lengths are a guide: a 15 s clip is 8 bars and stops right at the next bar line (Engine 1). Engine 2 lands the next downbeat.")
+                     ? "Engine 2 builds every clip from whole phrases of the music, so there are no lengths to choose: build-ups that land on the downbeat after the drop’s 4th or 8th bar, drops, build-ups, grooves with no drop and breakdowns. Each drop is used once, and the clips come from all through the set."
+                     : "Lengths are a guide: a 15 s clip is 8 bars and stops right at the next bar line (Engine 1). Engine 2 cuts musical clips instead.")
                     .font(.caption).foregroundStyle(.secondary)
                 Picker("Filters", selection: $state.project.clipFilters) {
                     Text("Auto mix (some black & white)").tag("auto")
@@ -319,14 +322,17 @@ struct ExportSettings: View {
                     ForEach(ClipMode.allCases) { Text($0.title).tag($0) }
                 }
                 Stepper(value: $state.project.clipCount, in: 0...200) {
-                    Text(state.project.clipCount == 0 ? "As many as fit, per length" : "\(state.project.clipCount) clip\(state.project.clipCount == 1 ? "" : "s") per length")
+                    let per = state.project.engine == .one ? "per length" : "per set"
+                    Text(state.project.clipCount == 0 ? "As many as fit, \(per)" : "\(state.project.clipCount) clip\(state.project.clipCount == 1 ? "" : "s") \(per)")
                 }
                 FormatPicker(aspect: $state.project.clipAspect, resolution: $state.project.clipResolution)
                 LabeledSlider(title: "Audio fade", value: $state.project.clipFade, range: 0...2,
                               format: { $0 < 0.05 ? "Off" : String(format: "%.1f s", $0) })
                 Text(state.project.clipMode == .best
-                     ? "Picks the most energetic moments, favouring a build-up into a drop. Clips only use stretches where a camera recorded."
-                     : "Splits the whole set into back-to-back clips on bar lines.")
+                     ? (state.project.engine == .one ? "Picks the most energetic moments, favouring a build-up into a drop. Clips only use stretches where a camera recorded."
+                        : "Picks a varied mix from all through the set, favouring build-ups into drops. Clips only use stretches where a camera recorded.")
+                     : (state.project.engine == .one ? "Splits the whole set into back-to-back clips on bar lines."
+                        : "Walks through the whole set in order, one musical clip after another."))
                     .font(.caption).foregroundStyle(.secondary)
             }
 

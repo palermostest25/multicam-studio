@@ -67,12 +67,16 @@ public struct ExcludedClip: Sendable, Hashable {
 public struct PlannedClip: Sendable, Hashable, Identifiable {
     public var id: Int { index }
     public var index: Int            // unique across all lengths
-    public var number: Int           // 1, 2, 3… within its length
-    public var length: Double        // requested length in seconds
+    public var number: Int           // 1, 2, 3… within its length (Engine 2: within the set)
+    public var length: Double        // requested length in seconds (Engine 2: the clip's own length)
     public var window: ClipWindow
     public var shots: [Shot]
     public var look: Look.Style = .none
-    public var label: String { "\(Int(length.rounded())) s #\(number)" + (look == .none ? "" : " · \(look.title)") }
+    /// Engine 2's clips are musical (a build-up and drop, a groove…); Engine 1's have fixed lengths.
+    public var isMusical: Bool { !window.kind.isEmpty }
+    public var label: String {
+        (isMusical ? "#\(number) \(window.title)" : "\(Int(length.rounded())) s #\(number)") + (look == .none ? "" : " · \(look.title)")
+    }
 }
 
 public struct EditPlan: Sendable {
@@ -327,19 +331,33 @@ public final class Engine: @unchecked Sendable {
         var short = Rhythm.shortForm
         short.cutScale = project.cutScale
         let forced = shots.filter { $0.reason == "manual shot override" }
-        for length in project.socialLengths {
-            let windows = Planner.windows(music: analysis.music, cameras: cover, total: total, fps: fps,
-                                          length: length, scores: scores, ending: project.engine.clipEnding,
-                                          excludes: analysis.part.clipExcludes)
-            let chosen = Planner.choose(windows, count: project.clipCount, mode: project.clipMode)
+        var groups = [(Double?, [ClipWindow])]()
+        if project.engine == .one {
+            for length in project.socialLengths {
+                let windows = Planner.windows(music: analysis.music, cameras: cover, total: total, fps: fps,
+                                              length: length, scores: scores, ending: project.engine.clipEnding,
+                                              excludes: analysis.part.clipExcludes)
+                groups.append((length, Planner.choose(windows, count: project.clipCount, mode: project.clipMode)))
+            }
+        } else if !project.socialLengths.isEmpty {
+            // Musical clips: whole phrases around the drops, build-ups and grooves, spread over the set.
+            groups.append((nil, Planner.socialClips(music: analysis.music, cameras: cover, total: total, fps: fps,
+                                                    count: project.clipCount, mode: project.clipMode,
+                                                    lengths: project.socialLengths, scores: scores,
+                                                    excludes: analysis.part.clipExcludes)))
+        }
+        for (length, chosen) in groups {
             for (i, w) in chosen.enumerated() {
                 let range = Int((w.start * Double(fps)).rounded())..<Int((w.end * Double(fps)).rounded())
                 let serial = clips.count + 1
+                // Engine 2: each clip leads with another camera, so the clips differ side by side on a grid.
+                let lead = length == nil ? Planner.leadCamera(cover, frame: range.lowerBound, n: i, main: main) : main
                 var plan = Planner.plan(cameras: cover, total: total, fps: fps, music: analysis.music, sections: sections,
-                                        activities: analysis.part.activities, seed: project.seed + serial, mainCamera: main,
+                                        activities: analysis.part.activities, seed: project.seed + serial, mainCamera: lead,
                                         rhythm: short, window: range, scores: scores)
                 plan = Planner.overlay(plan, forced: forced, start: range.lowerBound, end: range.upperBound)
-                clips.append(PlannedClip(index: serial, number: i + 1, length: length, window: w, shots: plan))
+                clips.append(PlannedClip(index: serial, number: i + 1, length: length ?? Planner.r3(w.end - w.start),
+                                         window: w, shots: plan))
             }
         }
         for (i, look) in Self.assignClipLooks(clips, mode: project.clipFilters, seed: project.seed).enumerated() {
@@ -353,8 +371,9 @@ public final class Engine: @unchecked Sendable {
 
     /// Export layout (the output folder is the export root, shared by every audio part):
     ///   Full sets/<set>.mp4
-    ///   Social media/<set>/<L>s/<set> - <L>s - 01 - 3m39s.mp4
-    ///   Social media alternatives/<shape>/<set>/<L>s/…
+    ///   Social media/<set>/<set> - 01 - 3m39s - Build-up and drop.mp4   (Engine 2: one folder per set)
+    ///   Social media/<set>/<L>s/<set> - <L>s - 01 - 3m39s.mp4            (Engine 1: a folder per length)
+    ///   Social media alternatives/<shape>/<set>/…  (same layout)
     ///   Project files/<set>/Cut list.txt
     /// Mirrors FULL_FOLDER/SOCIAL_FOLDER/ALTERNATIVES_FOLDER/FILES_FOLDER in multicam_edit.py.
     public static let fullFolderName = "Full sets"
@@ -416,10 +435,19 @@ public final class Engine: @unchecked Sendable {
     }
 
     /// "<set> - 15s - 01 - 3m39s.mp4": sorts by length, then number, and says where it starts.
+    /// Engine 2: "<set> - 01 - 3m39s - Build-up and drop.mp4", in set order, saying what the clip is.
     public static func clipName(_ base: String, _ clip: PlannedClip, _ ext: String) -> String {
         let s = Int(clip.window.start), h = s / 3600, m = s / 60 % 60, sec = s % 60
         let stamp = h > 0 ? String(format: "%dh%02dm%02ds", h, m, sec) : String(format: "%dm%02ds", m, sec)
+        if clip.isMusical {
+            return String(format: "%@ - %02d - %@ - %@.%@", base, clip.number, stamp, readableName(clip.window.title, fallback: "Clip"), ext)
+        }
         return String(format: "%@ - %ds - %02d - %@.%@", base, Int(clip.length.rounded()), clip.number, stamp, ext)
+    }
+
+    /// Engine 1 keeps a folder per length; Engine 2's musical clips share the set's folder.
+    static func clipDirectory(_ folder: URL, _ clip: PlannedClip) -> URL {
+        clip.isMusical ? folder : folder.appendingPathComponent("\(Int(clip.length.rounded()))s", isDirectory: true)
     }
 
     /// The synced recordings with the project's *current* framing. Analysis captures framing when it
@@ -525,16 +553,14 @@ public final class Engine: @unchecked Sendable {
         }
         let clipFolder = paths.social
         for clip in plan.clips {
-            let lengthFolder = clipFolder.appendingPathComponent("\(Int(clip.length.rounded()))s", isDirectory: true)
-            result.append(RenderedOutput(url: lengthFolder.appendingPathComponent(clipName(base, clip, ext)),
+            result.append(RenderedOutput(url: Self.clipDirectory(clipFolder, clip).appendingPathComponent(clipName(base, clip, ext)),
                                          kind: "clip", start: clip.window.start, end: clip.window.end, clipIndex: clip.index))
         }
         if project.clipAlternatives && !vertical.isEmpty {
             for shape in alternativeShapes {
                 let altFolder = paths.alternatives(shape)
                 for clip in plan.clips where clip.shots.contains(where: { $0.camera.map(vertical.contains) ?? false }) {
-                    let lengthFolder = altFolder.appendingPathComponent("\(Int(clip.length.rounded()))s", isDirectory: true)
-                    result.append(RenderedOutput(url: lengthFolder.appendingPathComponent(clipName(base, clip, ext)),
+                    result.append(RenderedOutput(url: Self.clipDirectory(altFolder, clip).appendingPathComponent(clipName(base, clip, ext)),
                                                  kind: "alternative", start: clip.window.start, end: clip.window.end,
                                                  clipIndex: clip.index, aspect: shape))
                 }

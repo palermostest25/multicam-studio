@@ -138,13 +138,15 @@ public enum ClipEnding: String, Codable, Sendable {
 }
 
 /// Editing engine. Engine 1 is frozen exactly as shipped in 2.1.3; changes go into Engine 2.
+/// Today they differ in the social clips: Engine 1 cuts fixed lengths that stop at the bar line,
+/// Engine 2 builds musical clips from whole phrases (Planner.socialClips).
 public enum EngineVersion: Int, Codable, CaseIterable, Identifiable, Sendable {
     case one = 1, two = 2
     public var id: Int { rawValue }
     public var title: String {
         switch self {
-        case .one: "Engine 1 (clips stop at the bar line)"
-        case .two: "Engine 2 (clips land on the beat)"
+        case .one: "Engine 1 (fixed-length clips)"
+        case .two: "Engine 2 (musical clips)"
         }
     }
     public var clipEnding: ClipEnding { self == .one ? .bar : .beat }

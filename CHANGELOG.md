@@ -1,5 +1,18 @@
 # Changes
 
+## 2.9.0
+
+- **Musical social clips (Engine 2).** Clips are no longer cut to a fixed number of seconds. Each one is built from whole phrases of the music, starting on a bar line and landing on the downbeat after its last bar:
+  - *Build-up and drop*: 4, 8 or 16 bars of build-up, then the drop, landing right after the drop's 4th or 8th bar.
+  - *Drop*: straight in on the drop, 8 or 16 bars.
+  - *Build-up*: the build, landing on the drop's first hit.
+  - *Groove*: 8 or 16 loud bars on the phrase grid with no drop in them.
+  - *Breakdown*: the start of a long breakdown.
+  The pick is varied: each drop is used once before any is reused, the clips come from all through the set, and the kinds are mixed. Without a steady beat, the lengths you set are used as before.
+- **Each clip leads with a different camera** (in turn, starting with the main camera), so the clips don't all look alike side by side on an Instagram grid.
+- **One folder for all clips.** Engine 2 saves every clip of a set in `Social media/<set>/`, named in set order with what happens in it: `26-09-26-1 - 03 - 41m12s - Build-up and drop.mp4`. The alternatives follow the same layout. *How many* is now per set.
+- Engine 1 is unchanged (fixed lengths, a folder per length).
+
 ## 2.8.1
 
 - AI mode: the Claude Code and Codex tools no longer pick up settings from a Claude Code session the app happened to be started from. When the claude tool's own sign-in has expired (it is separate from the Claude app), the message now says to run `claude auth login`.

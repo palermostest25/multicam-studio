@@ -437,3 +437,249 @@ def choose_clips(windows, count, mode='best'):
             if count and len(chosen) >= count:
                 break
     return sorted(chosen, key=lambda w: w['start'])
+
+
+# ---------------------------------------------------------------------------
+# Musical social clips (Engine 2). Mirrors Planner.musicalClips/chooseMusical in Swift.
+#
+# Clips are built from the set's structure instead of a fixed length: whole
+# phrases that start on a bar line and land on the downbeat after their last bar
+# (ringing for one beat). A build-up and drop clip, for example, starts 4, 8 or 16
+# bars before the drop and lands on the downbeat after the drop's 4th or 8th bar.
+# ---------------------------------------------------------------------------
+
+CLIP_TITLES = {'rise': 'Build-up and drop', 'drop': 'Drop', 'build': 'Build-up', 'groove': 'Groove',
+               'breakdown': 'Breakdown', 'moment': 'Highlight'}
+CLIP_BASE = {'rise': 1.2, 'drop': 0.8, 'groove': 0.55, 'build': 0.5, 'breakdown': 0.35, 'moment': 0.5}
+MIN_CLIP, MAX_CLIP = 6.0, 60.0   # seconds; shorter phrases feel cut off, longer ones lose people
+
+
+def nearest_index(values, t):
+    """Index of the value closest to t (the earlier one on a tie)."""
+    i = bisect.bisect_left(values, t)
+    if i <= 0:
+        return 0
+    if i >= len(values):
+        return len(values) - 1
+    return i if values[i] - t < t - values[i - 1] else i - 1
+
+
+def musical_clips(music, cameras, total, fps, scores=None, excludes=()):
+    """Every candidate clip the music offers, scored. Kinds:
+
+    rise       the build-up then the drop, landing after the drop's 4th or 8th bar
+    drop       straight in on the drop, 8 or 16 bars
+    build      the build-up, landing on the drop's first downbeat (the tease)
+    breakdown  the start of a long breakdown, 8 or 16 bars
+    groove     8 or 16 loud bars on the phrase grid with no drop in them
+
+    Empty without a confident beat grid."""
+    if not music or music.get('confidence', 0) < 0.35:
+        return []
+    beats = music.get('beats') or []
+    downbeats = music.get('downbeats') or []
+    if len(beats) <= 16 or len(downbeats) <= 8:
+        return []
+    duration = total / fps
+    bar = (downbeats[-1] - downbeats[0]) / (len(downbeats) - 1)
+    beat = bar / 4
+    energy = music.get('bar_energy') or []
+    bar_starts = music.get('bar_starts') or []
+    sections = music.get('sections') or []
+    drops = music.get('drops') or []
+
+    def level(a, b):
+        if not energy or not bar_starts:
+            return 0.5
+        lo = bisect.bisect_left(bar_starts, a)
+        hi = max(lo + 1, bisect.bisect_left(bar_starts, b))
+        part = energy[lo:hi]
+        return sum(part) / len(part) if part else 0.0
+
+    def picture(a, b):
+        if not scores:
+            return 0.0
+        return max(scores[j][1].mean(a, b) * scores[j][0].mean(a, b) for j in range(len(scores)))
+
+    def tail_after(n):
+        step = beats[n + 1] - beats[n] if n + 1 < len(beats) else beat
+        return step if abs(step - beat) <= 0.3 * beat else beat
+
+    result = []
+
+    def add(kind, k0, k1, moment, extra=0.0, loud_from=None):
+        # k0: first beat; k1: the downbeat the clip lands on (a whole number of bars later).
+        # loud_from: energy is judged from there (the drop), not over the quiet build.
+        if k0 < 0 or k1 >= len(beats) or k1 <= k0:
+            return
+        a, land = beats[k0], beats[k1]
+        tail = tail_after(k1)
+        b = land + tail
+        length = b - a
+        if length < MIN_CLIP or length > MAX_CLIP or b > duration + 0.01:
+            return
+        if any(a < e_end and e_start < b for e_start, e_end in excludes):
+            return
+        if not fully_covered(cameras, round(a * fps), round(b * fps)):
+            return
+        value = CLIP_BASE[kind] + 0.6 * level(a if loud_from is None else loud_from, land) + 0.4 * picture(a, b) + extra
+        if length > 40:
+            value -= 0.15
+        if length < 9:
+            value -= 0.1
+        result.append({'start': round(a, 3), 'end': round(b, 3), 'score': round(value, 3), 'tail': round(tail, 3),
+                       'kind': kind, 'title': CLIP_TITLES[kind], 'bars': (k1 - k0) // 4, 'moment': moment})
+
+    drop_beats = []
+    for n, d in enumerate(drops):
+        k = nearest_index(beats, d)
+        drop_beats.append(k)
+        i = next((j for j, s in enumerate(sections) if abs(s['start'] - d) < 0.01), None)
+        # The breakdown and build before the drop, and the drop section itself.
+        run_start, j = d, (i if i is not None else 0) - 1
+        while i is not None and j >= 0 and sections[j]['kind'] in ('build', 'breakdown'):
+            run_start, j = sections[j]['start'], j - 1
+        quiet = max(0, (k - nearest_index(beats, run_start)) // 4)
+        drop_end = sections[i]['end'] if i is not None else d + 16 * bar
+        loud = max(0, (nearest_index(beats, drop_end) - k) // 4)
+        contrast = max(0.0, level(d, d + 4 * bar) - level(d - 4 * bar, d))
+        moment = f'drop {n}'
+        for pre, pre_bonus in ((4, 0.0), (8, 0.15), (16, 0.05)):
+            if pre > max(4, quiet + 1):
+                continue
+            for post, post_bonus in ((4, 0.1), (8, 0.0)):
+                if post <= max(4, loud):
+                    add('rise', k - 4 * pre, k + 4 * post, moment, 0.5 * contrast + pre_bonus + post_bonus, d)
+        for post in (8, 16):
+            add('drop', k, k + 4 * post, moment)
+        for pre in (8, 16):
+            if pre <= max(8, quiet + 1):
+                add('build', k - 4 * pre, k, moment, 0.3 * contrast)
+        if quiet >= 8:
+            start = nearest_index(beats, run_start)
+            for length in (8, 16):
+                if length <= quiet:
+                    add('breakdown', start, start + 4 * length, moment)
+
+    # Phrase grid: 8-bar steps from each section's start and back from the next section's start.
+    anchors = set()
+    first = downbeats[0]
+    for idx, s in enumerate(sections):
+        ka = nearest_index(beats, max(s['start'], first))
+        kb = nearest_index(beats, max(s['end'], first))
+        k = ka
+        while k < kb:
+            anchors.add(k)
+            k += 32
+        if idx + 1 < len(sections):
+            k = kb - 32
+            while k >= ka:
+                anchors.add(k)
+                k -= 32
+    if not sections:
+        anchors = set(range(nearest_index(beats, first), len(beats), 32))
+    for k in sorted(anchors):
+        a = beats[k]
+        if section_at(sections, a + 1e-3) not in ('normal', 'drop') or any(abs(k - kd) < 2 for kd in drop_beats):
+            continue
+        for length in (8, 16):
+            k1 = k + 4 * length
+            if k1 >= len(beats):
+                continue
+            land = beats[k1]
+            if any(a < d < land - 1e-3 for d in drops):
+                continue  # a drop inside makes it a build-up and drop clip
+            if any(s['kind'] in ('breakdown', 'build') and s['start'] < land and a < s['end'] for s in sections):
+                continue
+            if level(a, land) < 0.45:
+                continue  # only the loud, busy stretches
+            add('groove', k, k1, f'groove {k // 128}')
+    return result
+
+
+def highlight_clips(music, cameras, total, fps, lengths, scores=None, excludes=()):
+    """Fallback without a beat grid: the classic windows at the requested lengths."""
+    result = []
+    for length in lengths or [15]:
+        for w in window_scores(music, cameras, total, fps, length, scores, 'beat', excludes):
+            result.append({**w, 'kind': 'moment', 'title': CLIP_TITLES['moment'],
+                           'bars': 0, 'moment': f'moment {int(w["start"] // 60)}'})
+    return result
+
+
+def choose_musical(candidates, count, mode='best', duration=None):
+    """A varied pick: each drop is used once before any is reused, clips spread over the whole set,
+    the kinds are mixed, and no two overlap (a clip may start on the downbeat the one before lands on).
+    sequence walks through the set in order instead. count 0 = as many as fit."""
+    if not candidates:
+        return []
+    span = duration or max(c['end'] for c in candidates)
+    spacing = span / count if count else 90.0
+    want = count or len(candidates)
+    chosen = []
+
+    def free(c):
+        return all(c['end'] - c['tail'] <= o['start'] + 1e-6 or c['start'] >= o['end'] - o['tail'] - 1e-6
+                   for o in chosen)
+
+    def adjusted(c, spread=True):
+        value = c['score']
+        value -= 1.5 * sum(1 for o in chosen if o['moment'] == c['moment'])
+        value -= 0.3 * sum(1 for o in chosen if o['kind'] == c['kind'])
+        value -= 0.15 * sum(1 for o in chosen if o['kind'] == c['kind'] and o['bars'] == c['bars'])
+        if spread and chosen:
+            centre = (c['start'] + c['end']) / 2
+            gap = min(abs(centre - (o['start'] + o['end']) / 2) for o in chosen)
+            value -= 0.8 * max(0.0, 1 - gap / spacing)
+        return value
+
+    def best_of(pool, spread):
+        best, key = None, None
+        for c in pool:
+            k = (adjusted(c, spread), -c['start'])
+            if key is None or k > key:
+                best, key = c, k
+        return best
+
+    if mode == 'sequence':
+        cursor = -1.0
+        while len(chosen) < want:
+            pool = [c for c in candidates if c['start'] >= cursor - 1e-6]
+            if not pool:
+                break
+            soonest = min(c['start'] for c in pool)
+            best = best_of([c for c in pool if c['start'] <= soonest + 30], False)
+            chosen.append(best)
+            cursor = best['end'] - best['tail']
+        return chosen
+    while len(chosen) < want:
+        pool = [c for c in candidates if free(c)]
+        if not pool:
+            break
+        chosen.append(best_of(pool, True))
+    return sorted(chosen, key=lambda c: c['start'])
+
+
+def social_clips(music, cameras, total, fps, count, mode='best', lengths=(), scores=None, excludes=()):
+    """Engine 2's social clips: musical candidates (or timed highlights without a beat grid), chosen for variety."""
+    candidates = musical_clips(music, cameras, total, fps, scores, excludes)
+    if not candidates:
+        candidates = highlight_clips(music, cameras, total, fps, list(lengths), scores, excludes)
+    return choose_musical(candidates, count, mode, total / fps)
+
+
+def lead_camera(cameras, frame, n, main):
+    """Engine 2: the n-th clip in the set (from 0) opens on, and favours, the n-th angle in turn,
+    starting with the main camera, so clips side by side on a profile grid don't all look alike.
+    Angles with no footage at the clip's start are skipped."""
+    angles = list(dict.fromkeys(c.angle for c in cameras))
+    if not angles:
+        return main
+    i = angles.index(main) if main in angles else 0
+    order = angles[i:] + angles[:i]
+    covering = angles_at(cameras, frame, 1)
+    for k in range(len(order)):
+        angle = order[(n + k) % len(order)]
+        if angle in covering:
+            return angle
+    return main
