@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION="${VERSION:-2.8.1}"
+VERSION="${VERSION:-2.9.0}"
 ARCHS="${ARCHS:-arm64 x86_64}"
 SCRATCH="${SCRATCH:-.build}"
 DIST="${DIST:-dist}"

@@ -1156,8 +1156,10 @@ def build_parser():
                         help="Score camera pictures (auto: when hardware decoding is available)")
     parser.add_argument("--cache-dir", metavar="PATH", help="Reusable analysis cache folder")
     parser.add_argument("--clips", type=clip_lengths, default=[], metavar="SECONDS[,SECONDS…]",
-                        help="Also export short clips of about this length (e.g. 15 for Reels)")
-    parser.add_argument("--clip-count", type=int, default=5, help="How many clips per length (0 = all that fit)")
+                        help="Also export short clips of about this length (e.g. 15 for Reels). Engine 2 takes the "
+                             "lengths from the music instead and only uses these when there is no steady beat")
+    parser.add_argument("--clip-count", type=int, default=5,
+                        help="How many clips per length (Engine 2: per set; 0 = all that fit)")
     parser.add_argument("--clip-framing", choices=["smart", "fit", "bars", "crop", "same"], default="smart",
                         help="Clip framing: smart fits wide shots over a blurred fill and crops close matches")
     parser.add_argument("--clip-mode", choices=["best", "sequence"], default="best",
@@ -1165,7 +1167,8 @@ def build_parser():
     parser.add_argument("--clip-aspect", choices=list(ASPECTS), default="9:16")
     parser.add_argument("--clip-resolution", type=int, choices=RESOLUTIONS, default=1080)
     parser.add_argument("--engine", type=int, choices=[1, 2], default=2,
-                        help="1: exactly as 2.1.3 (clips stop at the bar line); 2: clips land the next downbeat")
+                        help="1: exactly as 2.1.3 (fixed-length clips that stop at the bar line); "
+                             "2: musical clips (whole phrases around drops, build-ups and grooves)")
     parser.add_argument("--clip-fade", type=float, default=0.0, help="Audio fade in/out on clips, seconds")
     parser.add_argument("--clips-only", action="store_true", help="Export only the short clips")
     parser.add_argument("--no-clip-alternatives", dest="clip_alternatives", action="store_false",
@@ -1272,6 +1275,11 @@ def clip_stamp(seconds):
 def clip_name(base, length, number, start, extension):
     """'<set> - 15s - 01 - 3m39s.mp4': sorts by length, then number, and says where it starts."""
     return f"{base} - {round(length)}s - {number:02d} - {clip_stamp(start)}.{extension}"
+
+
+def musical_clip_name(base, number, start, title, extension):
+    """'<set> - 01 - 3m39s - Build-up and drop.mp4': in set order, saying where it starts and what it is."""
+    return f"{base} - {number:02d} - {clip_stamp(start)} - {readable_name(title, 'Clip')}.{extension}"
 
 
 def clip_framing(camera, aspect, mode, b_center=(0.5, 0.72)):
@@ -1388,8 +1396,9 @@ def main(argv=None):
                          "start with a letter/digit and do not end with a dot or space")
     # Export layout (the output folder is the export root, shared by every audio part):
     #   Full sets/<set>.mp4
-    #   Social media/<set>/<L>s/<set> - <L>s - 01 - 3m39s.mp4
-    #   Social media alternatives/<shape>/<set>/<L>s/…
+    #   Social media/<set>/<set> - 01 - 3m39s - Build-up and drop.mp4   (Engine 2: one folder per set)
+    #   Social media/<set>/<L>s/<set> - <L>s - 01 - 3m39s.mp4            (Engine 1: a folder per length)
+    #   Social media alternatives/<shape>/<set>/…  (same layout)
     #   Project files/<set>/Cut list.txt, Report.json, previews
     output = (output_dir / FULL_FOLDER / f"{output_name}.{extension}").resolve()
     files_folder = (output_dir / FILES_FOLDER / output_name).resolve()
@@ -1424,10 +1433,12 @@ def main(argv=None):
         existing = next(p for p in protected if p.exists())
         raise FileExistsError(f"Output already exists: {existing}. Use --overwrite to replace it.")
     if (args.clips and not args.plan_only and not args.overwrite and clip_folder.is_dir()
-            and any(clip_folder.glob(f"*/{output_name} - *s - [0-9][0-9] - *")) ):
+            and any(clip_folder.glob(f"{output_name} - [0-9][0-9] - *" if args.engine >= 2
+                                     else f"*/{output_name} - *s - [0-9][0-9] - *"))):
         raise FileExistsError(f"Clips already exist in {clip_folder}. Use --overwrite to replace them.")
     if (args.clips and args.clip_alternatives and not args.plan_only and not args.overwrite and alternatives_folder.is_dir()
-            and any(alternatives_folder.glob(f"*/{output_name}/*/{output_name} - *s - [0-9][0-9] - *"))):
+            and any(alternatives_folder.glob(f"*/{output_name}/{output_name} - [0-9][0-9] - *" if args.engine >= 2
+                                             else f"*/{output_name}/*/{output_name} - *s - [0-9][0-9] - *"))):
         raise FileExistsError(f"Clips already exist in {alternatives_folder}. Use --overwrite to replace them.")
     if any(p.exists() and not p.is_file() for p in all_outputs):
         raise ValueError("An output path refers to a directory; choose a different path")
@@ -1510,30 +1521,54 @@ def main(argv=None):
         clips = []
         short = planner.Rhythm(**{**planner.SHORT_FORM.__dict__, "cut_scale": args.cut_scale, "candidates": 24})
         forced = [s for s in shots if s.reason == "manual shot override"]
-        for length in args.clip_lengths:
-            windows = planner.window_scores(args.music, cameras, total, args.fps, length, scores,
-                                            'beat' if args.engine >= 2 else 'bar', args.clip_exclude)
-            chosen = planner.choose_clips(windows, args.clip_count, args.clip_mode)
+        if args.engine >= 2 and args.clip_lengths:
+            # Musical clips: whole phrases around the drops, build-ups and grooves, spread over the set.
+            groups = [(None, planner.social_clips(args.music, cameras, total, args.fps, args.clip_count, args.clip_mode,
+                                                  args.clip_lengths, scores, args.clip_exclude))]
+        else:
+            groups = [(length, planner.choose_clips(planner.window_scores(args.music, cameras, total, args.fps, length, scores,
+                                                                          'bar', args.clip_exclude),
+                                                    args.clip_count, args.clip_mode)) for length in args.clip_lengths]
+        for length, chosen in groups:
             for number, w in enumerate(chosen, 1):
                 index = len(clips) + 1
                 window = (round(w["start"] * args.fps), round(w["end"] * args.fps))
+                # Engine 2: each clip leads with another camera, so the clips differ side by side on a grid.
+                lead = (planner.lead_camera(cameras, window[0], number - 1, args.main_camera)
+                        if length is None else args.main_camera)
                 plan = planner.plan(cameras, total, args.fps, args.music, args.sections, args.activity,
-                                    args.seed + index, args.main_camera, short, window=window, scores=scores)
+                                    args.seed + index, lead, short, window=window, scores=scores)
                 plan = overlay_forced(plan, forced, *window)
-                path = clip_folder / f"{round(length)}s" / clip_name(output_name, length, number, w["start"], extension)
+                if length is None:  # one folder per set, named by what happens in the clip
+                    name = musical_clip_name(output_name, number, w["start"], w["title"], extension)
+                    where = ""
+                else:
+                    name = clip_name(output_name, length, number, w["start"], extension)
+                    where = f"{round(length)}s"
+                path = clip_folder / where / name
                 alternatives = {}
                 if args.clip_alternatives and any(s.camera is not None and is_vertical(cameras[s.camera]) for s in plan):
                     for shape, folder_name in ALTERNATIVE_SHAPES.items():
-                        alternatives[shape] = str(alternatives_folder / folder_name / output_name
-                                                  / f"{round(length)}s" / clip_name(output_name, length, number, w["start"], extension))
-                clips.append({"index": index, "number": number, "length": length, "alternative_paths": alternatives,
+                        alternatives[shape] = str(alternatives_folder / folder_name / output_name / where / name)
+                musical = {k: w[k] for k in ("kind", "title", "bars") if k in w}
+                if length is None:
+                    musical["lead_camera"] = lead
+                clips.append({"index": index, "number": number, "alternative_paths": alternatives, **musical,
+                              "length": length if length is not None else round(w["end"] - w["start"], 3),
                               "start": w["start"], "end": w["end"], "score": w["score"], "tail": w.get("tail", 0),
                               "duration": round(w["end"] - w["start"], 3), "path": str(path),
                               "rendered": False, "plan": plan,
                               "shots": shot_rows(plan, cameras, args.fps, duration, w["start"])})
         for clip, look in zip(clips, looks.assign_clip_looks(clips, args.clip_filters, args.seed)):
             clip["look"] = look
-        if clips:
+        if clips and clips[0].get("kind"):
+            kinds = {}
+            for clip in clips:
+                kinds[clip["title"].lower()] = kinds.get(clip["title"].lower(), 0) + 1
+            print(f"Planned {len(clips)} musical clip(s): " + ", ".join(f"{n} {k}" for k, n in kinds.items())
+                  + f" ({args.clip_aspect}, {'best moments' if args.clip_mode == 'best' else 'in sequence'}, "
+                  f"{args.clip_framing} framing)", flush=True)
+        elif clips:
             print(f"Planned {len(clips)} clip(s) at " + ", ".join(f"{v:g}s" for v in args.clip_lengths)
                   + f" ({args.clip_aspect}, {'best moments' if args.clip_mode == 'best' else 'in sequence'}, "
                   f"{args.clip_framing} framing)", flush=True)
@@ -1560,7 +1595,8 @@ def main(argv=None):
         for number, (kind, clip, shape) in enumerate(deliverables, 1):
             weight = full_seconds if kind == "full" else clip["duration"]
             title = ("full edit" if kind == "full"
-                     else f"{round(clip['length'])} s {f'{shape} alternative' if kind == 'alternative' else 'clip'} "
+                     else f"{clip.get('title') or str(round(clip['length'])) + ' s'} "
+                          f"{f'{shape} alternative' if kind == 'alternative' else 'clip'} "
                           f"{clip['number']} ({timecode(clip['start'])})")
             print(f"Deliverable {number}/{len(deliverables)} weight={weight:.3f} done={done_seconds:.3f} "
                   f"total={total_seconds:.3f}: {title}", flush=True)

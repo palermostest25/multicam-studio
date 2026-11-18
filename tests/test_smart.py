@@ -188,6 +188,83 @@ class FormatTests(unittest.TestCase):
         self.assertIn('iw*0.25', f)
         self.assertIn('ih*0.4', f)
 
+class MusicalClipTests(unittest.TestCase):
+    fps = 30
+
+    @classmethod
+    def setUpClass(cls):
+        # Three breakdowns and drops over seven minutes at 126 BPM.
+        parts = [dance_track(126, 140, (60, 90), seed=1), dance_track(126, 140, (40, 75), seed=2),
+                 dance_track(126, 140, (20, 50), seed=4)]
+        cls.info = music.analyse(np.concatenate(parts))
+
+    def set_music(self):
+        return self.info
+
+    def test_musical_clips_land_on_the_drop_bars(self):
+        info = self.set_music()
+        total = round(info['duration'] * self.fps)
+        cams = [Cam('A', 0, total), Cam('B', 0, total)]
+        candidates = planner.musical_clips(info, cams, total, self.fps, planner.build_scores(cams, total, self.fps))
+        self.assertTrue(info['drops'])
+        beats = info['beats']
+        kinds = {c['kind'] for c in candidates}
+        self.assertTrue({'rise', 'drop', 'build', 'groove'} <= kinds)
+        for c in candidates:
+            k0 = min(range(len(beats)), key=lambda i: abs(beats[i] - c['start']))
+            land = c['end'] - c['tail']
+            k1 = min(range(len(beats)), key=lambda i: abs(beats[i] - land))
+            self.assertEqual(k1 - k0, 4 * c['bars'])                    # whole bars, landing on a beat
+            self.assertTrue(planner.MIN_CLIP <= c['end'] - c['start'] <= planner.MAX_CLIP)
+            if c['kind'] == 'rise':
+                drop = next(d for d in info['drops'] if c['start'] < d < land)
+                self.assertIn(round((land - drop) / (240 / info['bpm'])), (4, 8))  # 4th or 8th bar of the drop
+            if c['kind'] == 'groove':
+                self.assertFalse(any(c['start'] < d < land for d in info['drops']))
+
+    def test_musical_choice_is_varied_and_spread(self):
+        info = self.set_music()
+        total = round(info['duration'] * self.fps)
+        cams = [Cam('A', 0, total)]
+        candidates = planner.musical_clips(info, cams, total, self.fps)
+        chosen = planner.choose_musical(candidates, 6, 'best', info['duration'])
+        self.assertEqual(len(chosen), 6)
+        drops = [c['moment'] for c in chosen if c['moment'].startswith('drop')]
+        self.assertEqual(len(drops), len(set(drops)))                  # no drop used twice
+        self.assertGreaterEqual(len({c['kind'] for c in chosen}), 3)
+        self.assertTrue(any(c['kind'] == 'groove' for c in chosen))   # some without a drop at all
+        for a, b in zip(chosen, chosen[1:]):
+            self.assertLessEqual(a['end'] - a['tail'], b['start'] + 1e-6)
+        thirds = {int(3 * (c['start'] + c['end']) / 2 / info['duration']) for c in chosen}
+        self.assertEqual(thirds, {0, 1, 2})                             # from all through the set
+        sequence = planner.choose_musical(candidates, 0, 'sequence', info['duration'])
+        self.assertTrue(all(a['end'] - a['tail'] <= b['start'] + 1e-6 for a, b in zip(sequence, sequence[1:])))
+        self.assertEqual(chosen, planner.choose_musical(candidates, 6, 'best', info['duration']))
+
+    def test_clips_lead_with_each_camera_in_turn(self):
+        cams = [Cam('A', 0, 3000), Cam('B', 0, 3000), Cam('C', 1500, 3000)]
+        self.assertEqual([planner.lead_camera(cams, 2000, n, 'B') for n in range(4)], ['B', 'C', 'A', 'B'])
+        self.assertEqual([planner.lead_camera(cams, 100, n, 'B') for n in range(3)], ['B', 'A', 'A'])  # C not recording yet
+        info = self.set_music()
+        total = round(info['duration'] * self.fps)
+        cams = [Cam('A', 0, total), Cam('B', 0, total), Cam('C', 0, total)]
+        short = planner.Rhythm(**{**planner.SHORT_FORM.__dict__, 'candidates': 8})
+        sections = [s for s in info['sections'] if s['kind'] != 'normal']
+        opening = []
+        for n, c in enumerate(planner.social_clips(info, cams, total, self.fps, 3, 'best', [15])):
+            window = (round(c['start'] * self.fps), round(c['end'] * self.fps))
+            lead = planner.lead_camera(cams, window[0], n, 'A')
+            shots = planner.plan(cams, total, self.fps, info, sections, (), 42 + n, lead, short, window=window)
+            opening.append(cams[shots[0].camera].angle)
+        self.assertEqual(opening, ['A', 'B', 'C'])
+
+    def test_social_clips_fall_back_to_lengths_without_a_beat(self):
+        total = 120 * self.fps
+        cams = [Cam('A', 0, total)]
+        chosen = planner.social_clips(None, cams, total, self.fps, 3, 'best', [15])
+        self.assertEqual(len(chosen), 3)
+        self.assertTrue(all(c['kind'] == 'moment' and abs(c['end'] - c['start'] - 15) < 1e-6 for c in chosen))
+
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'Requires FFmpeg')
 class ClipExportTests(unittest.TestCase):
@@ -208,7 +285,7 @@ class ClipExportTests(unittest.TestCase):
                 {'id': 'C', 'clips': [{'path': str(root / 'c.mov'), 'framing': {'mode': 'pad'}}]}]}), encoding='utf-8')
             with contextlib.redirect_stdout(io.StringIO()):
                 engine.main(['--project', str(project), '--audio', str(root / 'set.wav'), '--output-dir', str(root / 'out'),
-                             '--resolution', '720', '--clips', '7,5', '--clip-count', '2', '--clip-resolution', '720',
+                             '--resolution', '720', '--clips', '7,5', '--clip-count', '2', '--clip-resolution', '720', '--engine', '1',
                              '--clips-only', '--no-drift', '--preset', 'ultrafast', '--encoder', 'software', '--vision', 'off'])
             report = json.loads((root / 'out' / 'Project files' / 'set' / 'Report.json').read_text(encoding='utf-8'))
             self.assertEqual(report['status'], 'rendered')
@@ -235,6 +312,36 @@ class ClipExportTests(unittest.TestCase):
                     info = engine.probe(Path(path))
                     video = next(s for s in info['streams'] if s['codec_type'] == 'video')
                     self.assertEqual((video['width'], video['height']), sizes[shape])
+
+    def test_musical_clips_share_one_folder(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            samples = (dance_track(seconds=64, breakdown=(16, 31)) * 32767 * 0.5).astype('<i2')
+            with wave.open(str(root / 'set.wav'), 'wb') as f:
+                f.setnchannels(1); f.setsampwidth(2); f.setframerate(8000); f.writeframes(samples.tobytes())
+            subprocess.run(['ffmpeg', '-v', 'error', '-nostdin', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=320x180:r=30:d=64',
+                            '-i', str(root / 'set.wav'), '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'libx264', '-preset', 'ultrafast',
+                            '-c:a', 'pcm_s16le', '-t', '64', str(root / 'a.mov')], check=True)
+            shutil.copy(root / 'a.mov', root / 'b.mov')
+            with contextlib.redirect_stdout(io.StringIO()):
+                engine.main(['--cam-a', str(root / 'a.mov'), '--cam-b', str(root / 'b.mov'), '--audio', str(root / 'set.wav'),
+                             '--output-dir', str(root / 'out'), '--resolution', '720', '--clips', '15,30', '--clip-count', '0',
+                             '--clip-resolution', '720', '--clips-only', '--no-drift', '--preset', 'ultrafast',
+                             '--encoder', 'software', '--vision', 'off', '--no-clip-alternatives'])
+            report = json.loads((root / 'out' / 'Project files' / 'set' / 'Report.json').read_text(encoding='utf-8'))
+            self.assertEqual(report['status'], 'rendered')
+            self.assertTrue(report['clips'])
+            self.assertTrue(any(c['kind'] == 'rise' for c in report['clips']))
+            beats = report['beats']
+            for number, clip in enumerate(report['clips'], 1):
+                path = Path(clip['path'])
+                self.assertEqual(path.parent, (root / 'out' / 'Social media' / 'set').resolve())
+                self.assertTrue(path.name.startswith(f'set - {number:02d} - '))
+                self.assertTrue(path.name.endswith(f" - {clip['title']}.mp4"))
+                self.assertTrue(any(abs(clip['start'] - b) < 1e-3 for b in beats))
+                self.assertTrue(any(abs(clip['end'] - clip['tail'] - b) < 2e-3 for b in beats))
+                info = engine.probe(path)
+                self.assertAlmostEqual(float(info['format']['duration']), clip['end'] - clip['start'], delta=0.1)
 
     def test_auto_clip_looks_mix_black_and_white(self):
         import looks

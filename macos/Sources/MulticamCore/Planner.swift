@@ -106,6 +106,12 @@ public struct ClipWindow: Codable, Hashable, Sendable {
     public var score: Double
     /// Seconds after the landing downbeat (one beat when the clip ends on the beat, else 0).
     public var tail: Double = 0
+    /// Engine 2's musical clips: rise, drop, build, breakdown, groove or moment (empty for fixed lengths).
+    public var kind: String = ""
+    public var title: String = ""
+    public var bars: Int = 0
+    /// The drop or stretch of the set the clip comes from, so none is used twice.
+    public var moment: String = ""
 }
 
 public enum Planner {
@@ -479,6 +485,232 @@ public enum Planner {
             }
         }
         return chosen.sorted { $0.start < $1.start }
+    }
+}
+
+// MARK: musical social clips (Engine 2). A port of musical_clips/choose_musical in planner.py.
+//
+// Clips are built from the set's structure instead of a fixed length: whole phrases that start on
+// a bar line and land on the downbeat after their last bar (ringing for one beat). A build-up and
+// drop clip starts 4, 8 or 16 bars before the drop and lands after the drop's 4th or 8th bar.
+extension Planner {
+    public static let clipTitles = ["rise": "Build-up and drop", "drop": "Drop", "build": "Build-up", "groove": "Groove",
+                                    "breakdown": "Breakdown", "moment": "Highlight"]
+    static let clipBase = ["rise": 1.2, "drop": 0.8, "groove": 0.55, "build": 0.5, "breakdown": 0.35, "moment": 0.5]
+    /// Seconds: shorter phrases feel cut off, longer ones lose people.
+    public static let minClip = 6.0, maxClip = 60.0
+
+    static func bisectLeft(_ values: [Double], _ t: Double) -> Int {
+        var lo = 0, hi = values.count
+        while lo < hi { let m = (lo + hi) / 2; if values[m] < t { lo = m + 1 } else { hi = m } }
+        return lo
+    }
+
+    /// Index of the value closest to t (the earlier one on a tie).
+    static func nearestIndex(_ values: [Double], _ t: Double) -> Int {
+        let i = bisectLeft(values, t)
+        if i <= 0 { return 0 }
+        if i >= values.count { return values.count - 1 }
+        return values[i] - t < t - values[i - 1] ? i : i - 1
+    }
+
+    static func r3(_ x: Double) -> Double { (x * 1000).rounded() / 1000 }
+
+    /// Every candidate clip the music offers, scored: rise (build-up then drop), drop, build
+    /// (landing on the drop's first downbeat), breakdown and groove (loud phrases with no drop).
+    /// Empty without a confident beat grid.
+    public static func musicalClips(music: MusicInfo?, cameras: [Coverage], total: Int, fps: Int,
+                                    scores: [CameraScores] = [], excludes: [[Double]] = []) -> [ClipWindow] {
+        guard let music, music.confidence >= 0.35 else { return [] }
+        let beats = music.beats, downbeats = music.downbeats
+        guard beats.count > 16, downbeats.count > 8 else { return [] }
+        let f = Double(fps), duration = Double(total) / f
+        let bar = (downbeats.last! - downbeats[0]) / Double(downbeats.count - 1)
+        let beat = bar / 4
+        let energy = music.barEnergy, barStarts = music.barStarts, sections = music.sections, drops = music.drops
+
+        func level(_ a: Double, _ b: Double) -> Double {
+            guard !energy.isEmpty, !barStarts.isEmpty else { return 0.5 }
+            let lo = bisectLeft(barStarts, a)
+            let hi = max(lo + 1, bisectLeft(barStarts, b))
+            let slice = energy[min(lo, energy.count)..<min(hi, energy.count)]
+            return slice.isEmpty ? 0 : slice.reduce(0, +) / Double(slice.count)
+        }
+        func picture(_ a: Double, _ b: Double) -> Double {
+            scores.isEmpty ? 0 : scores.map { $0.activity.mean(a, b) * $0.usable.mean(a, b) }.max()!
+        }
+        func tailAfter(_ n: Int) -> Double {
+            let step = n + 1 < beats.count ? beats[n + 1] - beats[n] : beat
+            return abs(step - beat) <= 0.3 * beat ? step : beat
+        }
+
+        var result = [ClipWindow]()
+        // k0: first beat; k1: the downbeat the clip lands on (a whole number of bars later).
+        // loudFrom: energy is judged from there (the drop), not over the quiet build.
+        func add(_ kind: String, _ k0: Int, _ k1: Int, _ moment: String, _ extra: Double = 0, loudFrom: Double? = nil) {
+            guard k0 >= 0, k1 < beats.count, k1 > k0 else { return }
+            let a = beats[k0], land = beats[k1], tail = tailAfter(k1)
+            let b = land + tail, length = b - a
+            guard length >= minClip, length <= maxClip, b <= duration + 0.01 else { return }
+            if excludes.contains(where: { $0.count == 2 && a < $0[1] && $0[0] < b }) { return }
+            guard fullyCovered(cameras, Int((a * f).rounded()), Int((b * f).rounded())) else { return }
+            var value = clipBase[kind]! + 0.6 * level(loudFrom ?? a, land) + 0.4 * picture(a, b) + extra
+            if length > 40 { value -= 0.15 }
+            if length < 9 { value -= 0.1 }
+            result.append(ClipWindow(start: r3(a), end: r3(b), score: r3(value), tail: r3(tail), kind: kind,
+                                     title: clipTitles[kind]!, bars: (k1 - k0) / 4, moment: moment))
+        }
+
+        var dropBeats = [Int]()
+        for (n, d) in drops.enumerated() {
+            let k = nearestIndex(beats, d)
+            dropBeats.append(k)
+            let i = sections.firstIndex { abs($0.start - d) < 0.01 }
+            // The breakdown and build before the drop, and the drop section itself.
+            var runStart = d
+            if let i {
+                var j = i - 1
+                while j >= 0 && (sections[j].kind == "build" || sections[j].kind == "breakdown") { runStart = sections[j].start; j -= 1 }
+            }
+            let quiet = max(0, (k - nearestIndex(beats, runStart)) / 4)
+            let dropEnd = i.map { sections[$0].end } ?? d + 16 * bar
+            let loud = max(0, (nearestIndex(beats, dropEnd) - k) / 4)
+            let contrast = max(0, level(d, d + 4 * bar) - level(d - 4 * bar, d))
+            let moment = "drop \(n)"
+            for (pre, preBonus) in [(4, 0.0), (8, 0.15), (16, 0.05)] where pre <= max(4, quiet + 1) {
+                for (post, postBonus) in [(4, 0.1), (8, 0.0)] where post <= max(4, loud) {
+                    add("rise", k - 4 * pre, k + 4 * post, moment, 0.5 * contrast + preBonus + postBonus, loudFrom: d)
+                }
+            }
+            for post in [8, 16] { add("drop", k, k + 4 * post, moment) }
+            for pre in [8, 16] where pre <= max(8, quiet + 1) { add("build", k - 4 * pre, k, moment, 0.3 * contrast) }
+            if quiet >= 8 {
+                let start = nearestIndex(beats, runStart)
+                for length in [8, 16] where length <= quiet { add("breakdown", start, start + 4 * length, moment) }
+            }
+        }
+
+        // Phrase grid: 8-bar steps from each section's start and back from the next section's start.
+        var anchors = Set<Int>()
+        let first = downbeats[0]
+        for (idx, s) in sections.enumerated() {
+            let ka = nearestIndex(beats, max(s.start, first)), kb = nearestIndex(beats, max(s.end, first))
+            var k = ka
+            while k < kb { anchors.insert(k); k += 32 }
+            if idx + 1 < sections.count {
+                k = kb - 32
+                while k >= ka { anchors.insert(k); k -= 32 }
+            }
+        }
+        if sections.isEmpty { anchors = Set(stride(from: nearestIndex(beats, first), to: beats.count, by: 32)) }
+        for k in anchors.sorted() {
+            let a = beats[k]
+            let kind = section(sections, a + 1e-3)
+            if !(kind == "normal" || kind == "drop") || dropBeats.contains(where: { abs(k - $0) < 2 }) { continue }
+            for length in [8, 16] {
+                let k1 = k + 4 * length
+                if k1 >= beats.count { continue }
+                let land = beats[k1]
+                if drops.contains(where: { a < $0 && $0 < land - 1e-3 }) { continue }  // that is a build-up and drop
+                if sections.contains(where: { ($0.kind == "breakdown" || $0.kind == "build") && $0.start < land && a < $0.end }) { continue }
+                if level(a, land) < 0.45 { continue }  // only the loud, busy stretches
+                add("groove", k, k1, "groove \(k / 128)")
+            }
+        }
+        return result
+    }
+
+    /// Fallback without a beat grid: the classic windows at the requested lengths.
+    public static func highlightClips(music: MusicInfo?, cameras: [Coverage], total: Int, fps: Int, lengths: [Double],
+                                      scores: [CameraScores] = [], excludes: [[Double]] = []) -> [ClipWindow] {
+        var result = [ClipWindow]()
+        for length in lengths.isEmpty ? [15] : lengths {
+            for var w in windows(music: music, cameras: cameras, total: total, fps: fps, length: length,
+                                 scores: scores, ending: .beat, excludes: excludes) {
+                w.kind = "moment"; w.title = clipTitles["moment"]!; w.bars = 0
+                w.moment = "moment \(Int(w.start / 60))"
+                result.append(w)
+            }
+        }
+        return result
+    }
+
+    /// A varied pick: each drop is used once before any is reused, clips spread over the whole set,
+    /// the kinds are mixed, and no two overlap (a clip may start on the downbeat the one before lands on).
+    /// `sequence` walks through the set in order instead. count 0 = as many as fit.
+    public static func chooseMusical(_ candidates: [ClipWindow], count: Int, mode: ClipMode, duration: Double? = nil) -> [ClipWindow] {
+        guard !candidates.isEmpty else { return [] }
+        let span = (duration ?? 0) > 0 ? duration! : candidates.map(\.end).max()!
+        let spacing = count > 0 ? span / Double(count) : 90
+        let want = count > 0 ? count : candidates.count
+        var chosen = [ClipWindow]()
+        func free(_ c: ClipWindow) -> Bool {
+            chosen.allSatisfy { c.end - c.tail <= $0.start + 1e-6 || c.start >= $0.end - $0.tail - 1e-6 }
+        }
+        func adjusted(_ c: ClipWindow, spread: Bool) -> Double {
+            var value = c.score
+            value -= 1.5 * Double(chosen.filter { $0.moment == c.moment }.count)
+            value -= 0.3 * Double(chosen.filter { $0.kind == c.kind }.count)
+            value -= 0.15 * Double(chosen.filter { $0.kind == c.kind && $0.bars == c.bars }.count)
+            if spread && !chosen.isEmpty {
+                let centre = (c.start + c.end) / 2
+                let gap = chosen.map { abs(centre - ($0.start + $0.end) / 2) }.min()!
+                value -= 0.8 * max(0, 1 - gap / spacing)
+            }
+            return value
+        }
+        func bestOf(_ pool: [ClipWindow], spread: Bool) -> ClipWindow? {
+            var best: ClipWindow? = nil, key = (0.0, 0.0)
+            for c in pool {
+                let k = (adjusted(c, spread: spread), -c.start)
+                if best == nil || k > key { best = c; key = k }
+            }
+            return best
+        }
+        if mode == .sequence {
+            var cursor = -1.0
+            while chosen.count < want {
+                let pool = candidates.filter { $0.start >= cursor - 1e-6 }
+                guard let soonest = pool.map(\.start).min(),
+                      let best = bestOf(pool.filter { $0.start <= soonest + 30 }, spread: false) else { break }
+                chosen.append(best)
+                cursor = best.end - best.tail
+            }
+            return chosen
+        }
+        while chosen.count < want {
+            guard let best = bestOf(candidates.filter { free($0) }, spread: true) else { break }
+            chosen.append(best)
+        }
+        return chosen.sorted { $0.start < $1.start }
+    }
+
+    /// Engine 2: the n-th clip in the set (from 0) opens on, and favours, the n-th angle in turn,
+    /// starting with the main camera, so clips side by side on a profile grid don't all look alike.
+    /// Angles with no footage at the clip's start are skipped. Mirrors lead_camera in planner.py.
+    public static func leadCamera(_ cameras: [Coverage], frame: Int, n: Int, main: String) -> String {
+        var angles = [String]()
+        for c in cameras where !angles.contains(c.angle) { angles.append(c.angle) }
+        guard !angles.isEmpty else { return main }
+        let i = angles.firstIndex(of: main) ?? 0
+        let order = Array(angles[i...] + angles[..<i])
+        let covering = Set(anglesAt(cameras, frame, minimum: 1).map(\.0))
+        for k in 0..<order.count {
+            let angle = order[(n + k) % order.count]
+            if covering.contains(angle) { return angle }
+        }
+        return main
+    }
+
+    /// Engine 2's social clips: musical candidates (or timed highlights without a beat grid), chosen for variety.
+    public static func socialClips(music: MusicInfo?, cameras: [Coverage], total: Int, fps: Int, count: Int, mode: ClipMode,
+                                   lengths: [Double], scores: [CameraScores] = [], excludes: [[Double]] = []) -> [ClipWindow] {
+        var candidates = musicalClips(music: music, cameras: cameras, total: total, fps: fps, scores: scores, excludes: excludes)
+        if candidates.isEmpty {
+            candidates = highlightClips(music: music, cameras: cameras, total: total, fps: fps, lengths: lengths,
+                                        scores: scores, excludes: excludes)
+        }
+        return chooseMusical(candidates, count: count, mode: mode, duration: Double(total) / Double(fps))
     }
 }
 

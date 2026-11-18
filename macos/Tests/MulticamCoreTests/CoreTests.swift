@@ -137,6 +137,38 @@ final class PlannerTests: XCTestCase {
         XCTAssertEqual(EngineVersion.two.clipEnding, .beat)
         XCTAssertEqual(try JSONDecoder().decode(Project.self, from: Data("{}".utf8)).engine, .two)
     }
+
+    /// Engine 2: musical clips land on whole bars, use each drop once, and lead with each camera in turn
+    /// (the same checks as MusicalClipTests in tests/test_smart.py).
+    func testMusicalClipsLandOnTheDropBars() {
+        let music = MusicAnalysis.analyse(danceTrack(bpm: 126, seconds: 140, breakdown: 60...90)
+                                          + danceTrack(bpm: 126, seconds: 140, breakdown: 40...75)
+                                          + danceTrack(bpm: 126, seconds: 140, breakdown: 20...50))
+        let total = Int((music.duration * Double(fps)).rounded())
+        let cams = [Coverage(angle: "A", first: 0, last: total), Coverage(angle: "B", first: 0, last: total),
+                    Coverage(angle: "C", first: 0, last: total)]
+        let candidates = Planner.musicalClips(music: music, cameras: cams, total: total, fps: fps)
+        XCTAssertFalse(music.drops.isEmpty)
+        XCTAssertTrue(Set(["rise", "drop", "build", "groove"]).isSubset(of: Set(candidates.map(\.kind))))
+        let beats = music.beats
+        func nearest(_ t: Double) -> Int { beats.indices.min { abs(beats[$0] - t) < abs(beats[$1] - t) }! }
+        for c in candidates {
+            XCTAssertEqual(nearest(c.end - c.tail) - nearest(c.start), 4 * c.bars)
+            XCTAssertTrue(c.end - c.start >= Planner.minClip && c.end - c.start <= Planner.maxClip)
+            if c.kind == "groove" { XCTAssertFalse(music.drops.contains { c.start < $0 && $0 < c.end - c.tail }) }
+        }
+        let chosen = Planner.chooseMusical(candidates, count: 6, mode: .best, duration: music.duration)
+        XCTAssertEqual(chosen.count, 6)
+        let drops = chosen.map(\.moment).filter { $0.hasPrefix("drop") }
+        XCTAssertEqual(drops.count, Set(drops).count)
+        XCTAssertTrue(chosen.contains { $0.kind == "groove" })
+        for (a, b) in zip(chosen, chosen.dropFirst()) { XCTAssertLessThanOrEqual(a.end - a.tail, b.start + 1e-6) }
+        XCTAssertEqual((0..<4).map { Planner.leadCamera(cams, frame: 0, n: $0, main: "B") }, ["B", "C", "A", "B"])
+        let clip = PlannedClip(index: 1, number: 3, length: 23.6, window: chosen[0], shots: [])
+        XCTAssertEqual(Engine.clipName("Set", clip, "mp4"),
+                       "Set - 03 - \(Int(chosen[0].start) / 60)m\(String(format: "%02d", Int(chosen[0].start) % 60))s - \(chosen[0].title).mp4")
+        XCTAssertEqual(Engine.clipDirectory(URL(fileURLWithPath: "/x"), clip).path, "/x")
+    }
 }
 
 final class AIGuideTests: XCTestCase {
@@ -357,6 +389,7 @@ final class EndToEndTests: XCTestCase {
         project.outputDir = folder.appendingPathComponent("out").path
         project.resolution = 720; project.clipResolution = 720
         project.clips = 7; project.clipLengths = [7, 10]; project.clipCount = 2
+        project.engine = .one   // fixed-length clips, a folder per length
         let engine = Engine(cacheDirectory: folder.appendingPathComponent("cache"), log: { _ in })
         let analysis = try await engine.analyse(project: project, part: project.parts[0], vision: false)
         XCTAssertEqual(analysis.clips.count, 2)
