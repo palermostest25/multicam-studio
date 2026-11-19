@@ -162,7 +162,7 @@ final class PlannerTests: XCTestCase {
         let drops = chosen.map(\.moment).filter { $0.hasPrefix("drop") }
         XCTAssertEqual(drops.count, Set(drops).count)
         XCTAssertTrue(chosen.contains { $0.kind == "groove" })
-        for (a, b) in zip(chosen, chosen.dropFirst()) { XCTAssertLessThanOrEqual(a.end - a.tail, b.start + 1e-6) }
+        for (a, b) in zip(chosen, chosen.dropFirst()) { XCTAssertLessThanOrEqual(a.end, b.start + 1e-6) }
         XCTAssertEqual((0..<4).map { Planner.leadCamera(cams, frame: 0, n: $0, main: "B") }, ["B", "C", "A", "B"])
         let clip = PlannedClip(index: 1, number: 3, length: 23.6, window: chosen[0], shots: [])
         XCTAssertEqual(Engine.clipName("Set", clip, "mp4"),
