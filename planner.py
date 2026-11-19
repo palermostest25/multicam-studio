@@ -609,7 +609,8 @@ def highlight_clips(music, cameras, total, fps, lengths, scores=None, excludes=(
 
 def choose_musical(candidates, count, mode='best', duration=None):
     """A varied pick: each drop is used once before any is reused, clips spread over the whole set,
-    the kinds are mixed, and no two overlap (a clip may start on the downbeat the one before lands on).
+    the kinds are mixed, and no two share a single frame (not even the last ringing beat), so clips of
+    different lengths are never the same scene.
     sequence walks through the set in order instead. count 0 = as many as fit."""
     if not candidates:
         return []
@@ -619,8 +620,7 @@ def choose_musical(candidates, count, mode='best', duration=None):
     chosen = []
 
     def free(c):
-        return all(c['end'] - c['tail'] <= o['start'] + 1e-6 or c['start'] >= o['end'] - o['tail'] - 1e-6
-                   for o in chosen)
+        return all(c['end'] <= o['start'] + 1e-6 or c['start'] >= o['end'] - 1e-6 for o in chosen)
 
     def adjusted(c, spread=True):
         value = c['score']
@@ -650,7 +650,7 @@ def choose_musical(candidates, count, mode='best', duration=None):
             soonest = min(c['start'] for c in pool)
             best = best_of([c for c in pool if c['start'] <= soonest + 30], False)
             chosen.append(best)
-            cursor = best['end'] - best['tail']
+            cursor = best['end']
         return chosen
     while len(chosen) < want:
         pool = [c for c in candidates if free(c)]

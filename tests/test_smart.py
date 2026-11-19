@@ -234,12 +234,18 @@ class MusicalClipTests(unittest.TestCase):
         self.assertGreaterEqual(len({c['kind'] for c in chosen}), 3)
         self.assertTrue(any(c['kind'] == 'groove' for c in chosen))   # some without a drop at all
         for a, b in zip(chosen, chosen[1:]):
-            self.assertLessEqual(a['end'] - a['tail'], b['start'] + 1e-6)
+            self.assertLessEqual(a['end'], b['start'] + 1e-6)              # not a single shared frame
         thirds = {int(3 * (c['start'] + c['end']) / 2 / info['duration']) for c in chosen}
         self.assertEqual(thirds, {0, 1, 2})                             # from all through the set
         sequence = planner.choose_musical(candidates, 0, 'sequence', info['duration'])
-        self.assertTrue(all(a['end'] - a['tail'] <= b['start'] + 1e-6 for a, b in zip(sequence, sequence[1:])))
+        self.assertTrue(all(a['end'] <= b['start'] + 1e-6 for a, b in zip(sequence, sequence[1:])))
         self.assertEqual(chosen, planner.choose_musical(candidates, 6, 'best', info['duration']))
+        # As many as fit: short and long clips together, and still no frame used twice.
+        everything = planner.choose_musical(candidates, 0, 'best', info['duration'])
+        self.assertGreater(len({round(c['end'] - c['start']) for c in everything}), 1)
+        for i, a in enumerate(everything):
+            for b in everything[i + 1:]:
+                self.assertTrue(a['end'] <= b['start'] + 1e-6 or b['end'] <= a['start'] + 1e-6)
 
     def test_clips_lead_with_each_camera_in_turn(self):
         cams = [Cam('A', 0, 3000), Cam('B', 0, 3000), Cam('C', 1500, 3000)]

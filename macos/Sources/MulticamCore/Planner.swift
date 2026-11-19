@@ -636,7 +636,8 @@ extension Planner {
     }
 
     /// A varied pick: each drop is used once before any is reused, clips spread over the whole set,
-    /// the kinds are mixed, and no two overlap (a clip may start on the downbeat the one before lands on).
+    /// the kinds are mixed, and no two share a single frame (not even the last ringing beat), so clips of
+    /// different lengths are never the same scene.
     /// `sequence` walks through the set in order instead. count 0 = as many as fit.
     public static func chooseMusical(_ candidates: [ClipWindow], count: Int, mode: ClipMode, duration: Double? = nil) -> [ClipWindow] {
         guard !candidates.isEmpty else { return [] }
@@ -645,7 +646,7 @@ extension Planner {
         let want = count > 0 ? count : candidates.count
         var chosen = [ClipWindow]()
         func free(_ c: ClipWindow) -> Bool {
-            chosen.allSatisfy { c.end - c.tail <= $0.start + 1e-6 || c.start >= $0.end - $0.tail - 1e-6 }
+            chosen.allSatisfy { c.end <= $0.start + 1e-6 || c.start >= $0.end - 1e-6 }
         }
         func adjusted(_ c: ClipWindow, spread: Bool) -> Double {
             var value = c.score
@@ -674,7 +675,7 @@ extension Planner {
                 guard let soonest = pool.map(\.start).min(),
                       let best = bestOf(pool.filter { $0.start <= soonest + 30 }, spread: false) else { break }
                 chosen.append(best)
-                cursor = best.end - best.tail
+                cursor = best.end
             }
             return chosen
         }

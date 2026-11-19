@@ -37,7 +37,9 @@ final class MusicTests: XCTestCase {
         let info = MusicAnalysis.analyse(danceTrack())
         XCTAssertEqual(info.bpm ?? 0, 128, accuracy: 1)
         XCTAssertGreaterThan(info.confidence, 0.5)
-        let steady = zip(info.beats.dropFirst(), info.beats).filter { abs($0 - $1 - 60 / 128) < 0.03 }.count
+        let period: Double = 60.0 / 128.0
+        let intervals: [Double] = zip(info.beats.dropFirst(), info.beats).map { (b: Double, a: Double) -> Double in b - a }
+        let steady: Int = intervals.filter { (d: Double) -> Bool in abs(d - period) < 0.03 }.count
         XCTAssertGreaterThan(Double(steady) / Double(info.beats.count - 1), 0.9)
         XCTAssertTrue(info.sections.contains { $0.kind == "breakdown" })
         XCTAssertEqual(info.drops.first ?? 0, 48, accuracy: 2)
@@ -162,11 +164,13 @@ final class PlannerTests: XCTestCase {
         let drops = chosen.map(\.moment).filter { $0.hasPrefix("drop") }
         XCTAssertEqual(drops.count, Set(drops).count)
         XCTAssertTrue(chosen.contains { $0.kind == "groove" })
-        for (a, b) in zip(chosen, chosen.dropFirst()) { XCTAssertLessThanOrEqual(a.end - a.tail, b.start + 1e-6) }
+        for (a, b) in zip(chosen, chosen.dropFirst()) { XCTAssertLessThanOrEqual(a.end, b.start + 1e-6) }
         XCTAssertEqual((0..<4).map { Planner.leadCamera(cams, frame: 0, n: $0, main: "B") }, ["B", "C", "A", "B"])
         let clip = PlannedClip(index: 1, number: 3, length: 23.6, window: chosen[0], shots: [])
-        XCTAssertEqual(Engine.clipName("Set", clip, "mp4"),
-                       "Set - 03 - \(Int(chosen[0].start) / 60)m\(String(format: "%02d", Int(chosen[0].start) % 60))s - \(chosen[0].title).mp4")
+        let startSeconds: Int = Int(chosen[0].start)
+        let stamp: String = String(format: "%dm%02ds", startSeconds / 60, startSeconds % 60)
+        let expected: String = "Set - 03 - " + stamp + " - " + chosen[0].title + ".mp4"
+        XCTAssertEqual(Engine.clipName("Set", clip, "mp4"), expected)
         XCTAssertEqual(Engine.clipDirectory(URL(fileURLWithPath: "/x"), clip).path, "/x")
     }
 }

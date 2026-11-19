@@ -8,7 +8,7 @@
   - *Build-up*: the build, landing on the drop's first hit.
   - *Groove*: 8 or 16 loud bars on the phrase grid with no drop in them.
   - *Breakdown*: the start of a long breakdown.
-  The pick is varied: each drop is used once before any is reused, the clips come from all through the set, and the kinds are mixed. Without a steady beat, the lengths you set are used as before.
+  The pick is varied: each drop is used once before any is reused, the clips come from all through the set, and the kinds are mixed. Clips never share a single frame, so a short clip and a long one are never the same moment. Without a steady beat, the lengths you set are used as before.
 - **Each clip leads with a different camera** (in turn, starting with the main camera), so the clips don't all look alike side by side on an Instagram grid.
 - **One folder for all clips.** Engine 2 saves every clip of a set in `Social media/<set>/`, named in set order with what happens in it: `26-09-26-1 - 03 - 41m12s - Build-up and drop.mp4`. The alternatives follow the same layout. *How many* is now per set.
 - Engine 1 is unchanged (fixed lengths, a folder per length).
