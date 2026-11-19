@@ -18,13 +18,17 @@ APP="$DIST/Multicam Studio.app"
 echo "Building $VERSION for: $ARCHS"
 arch_flags=()
 for a in $ARCHS; do arch_flags+=(--arch "$a"); done
+records_sdk14() { otool -arch "${ARCHS%% *}" -l "$1" | grep -A4 LC_BUILD_VERSION | grep -q "sdk 14.0"; }
+BIN=""
 if swift build -c release --scratch-path "$SCRATCH" "${arch_flags[@]}" --product MulticamStudio \
    && swift build -c release --scratch-path "$SCRATCH" "${arch_flags[@]}" --product mcstudio; then
     BIN="$(swift build -c release --scratch-path "$SCRATCH" "${arch_flags[@]}" --show-bin-path)"
-else
-    # Command Line Tools only: one build per architecture, joined with lipo. Record SDK 14 like the
-    # Xcode build does: linking against a newer SDK turns on SwiftUI split-view behaviour that
-    # aborted the app at launch (update-constraints loop).
+    records_sdk14 "$BIN/MulticamStudio" || { echo "The universal build links a newer SDK; building per architecture instead"; BIN=""; }
+fi
+if [ -z "$BIN" ]; then
+    # One build per architecture, joined with lipo, recording SDK 14 like the multi-arch Xcode build
+    # does: linking against a newer SDK turns on SwiftUI split-view behaviour that aborted the app at
+    # launch (update-constraints loop). Also used with the Command Line Tools only.
     BIN="$SCRATCH/universal"
     mkdir -p "$BIN"
     for product in MulticamStudio mcstudio; do
@@ -38,7 +42,9 @@ else
     done
 fi
 # Never ship a build that links a newer SDK (see above).
-otool -arch arm64 -l "$BIN/MulticamStudio" | grep -A4 LC_BUILD_VERSION | grep -q "sdk 14.0" || { echo "error: app links a newer SDK"; exit 1; }
+for a in $ARCHS; do
+    otool -arch "$a" -l "$BIN/MulticamStudio" | grep -A4 LC_BUILD_VERSION | grep -q "sdk 14.0" || { echo "error: app links a newer SDK ($a)"; exit 1; }
+done
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Helpers"

@@ -1,0 +1,114 @@
+name: macOS release
+
+# Every v* tag becomes a full GitHub release: tests, the universal app, the DMG and its
+# .sha256 (the app's updater needs both assets), with the CHANGELOG section as notes.
+# Run it from the Actions tab with no tag for a trial build of the branch (tests, app and DMG
+# as a workflow artifact, nothing published), or with an existing tag to (re)publish it.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)publish, e.g. v2.9.0. Leave empty for a trial build.
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Xcode 26: the Liquid Glass code needs the macOS 26 SDK (the app still records SDK 14.0).
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Check the version matches everywhere
+        run: |
+          if [ -n "$TAG" ]; then
+            VERSION="${TAG#v}"; PUBLISH=true
+          else
+            VERSION="$(sed -n "s/^VERSION = '\(.*\)'$/\1/p" server.py)"; PUBLISH=false
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "PUBLISH=$PUBLISH" >> "$GITHUB_ENV"
+          echo "Version $VERSION, publish: $PUBLISH"
+          grep -q "^VERSION = '$VERSION'$" server.py || { echo "server.py VERSION is not $VERSION"; exit 1; }
+          grep -q "VERSION:-$VERSION}" macos/build-app.sh || { echo "build-app.sh VERSION is not $VERSION"; exit 1; }
+          grep -q "^## $VERSION$" CHANGELOG.md || { echo "CHANGELOG.md has no '## $VERSION' section"; exit 1; }
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)" 2>/dev/null || true
+          xcodebuild -version
+          swift --version
+
+      - name: Install FFmpeg and the Python dependencies
+        run: |
+          brew install ffmpeg
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install -q -r requirements.txt
+
+      - name: Python tests
+        run: /tmp/venv/bin/python -m unittest discover -s tests -v
+
+      - name: Swift tests
+        working-directory: macos
+        run: swift test
+
+      - name: Build the app and DMG (ad-hoc signed)
+        working-directory: macos
+        run: VERSION="$VERSION" ./build-app.sh
+
+      - name: Verify the DMG
+        working-directory: macos/dist
+        run: |
+          DMG="Multicam-Studio-$VERSION-macOS.dmg"
+          shasum -a 256 -c "$DMG.sha256"
+          hdiutil verify "$DMG"
+          MOUNT="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT" "$DMG"
+          APP="$MOUNT/Multicam Studio.app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")" = "$VERSION"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          lipo -archs "$APP/Contents/MacOS/Multicam Studio"
+          for a in arm64 x86_64; do
+            otool -arch "$a" -l "$APP/Contents/MacOS/Multicam Studio" | grep -A4 LC_BUILD_VERSION | grep -q "sdk 14.0"
+          done
+          # The packaged engine runs: analyse a generated click track at 128 BPM.
+          ffmpeg -v error -f lavfi -i "aevalsrc='sin(2*PI*60*t)*exp(-25*mod(t,60/128))':s=8000:d=30" -ac 1 /tmp/click.wav
+          "$APP/Contents/Helpers/mcstudio" music /tmp/click.wav | tee /tmp/music.txt
+          grep -Eq "^12[78]\.[0-9] BPM" /tmp/music.txt
+          hdiutil detach "$MOUNT"
+
+      - name: Keep the trial build
+        if: env.PUBLISH != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Multicam-Studio-${{ env.VERSION }}-macOS-trial
+          path: |
+            macos/dist/*.dmg
+            macos/dist/*.dmg.sha256
+
+      - name: Publish the release
+        if: env.PUBLISH == 'true'
+        run: |
+          awk -v v="## $VERSION" '$0 == v {on=1; next} /^## / && on {exit} on' CHANGELOG.md > notes.md
+          test -s notes.md
+          DMG="macos/dist/Multicam-Studio-$VERSION-macOS.dmg"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$DMG" "$DMG.sha256" --clobber
+            gh release edit "$TAG" --title "Multicam Studio $VERSION" --notes-file notes.md --latest
+          else
+            gh release create "$TAG" "$DMG" "$DMG.sha256" --verify-tag --title "Multicam Studio $VERSION" \
+              --notes-file notes.md --latest
+          fi
+          gh release view "$TAG" --json assets --jq '.assets[].name'
