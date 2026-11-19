@@ -4,15 +4,22 @@ name: macOS release
 # .sha256 (the app's updater needs both assets), with the CHANGELOG section as notes.
 # Run it from the Actions tab with no tag for a trial build of the branch (tests, app and DMG
 # as a workflow artifact, nothing published), or with an existing tag to (re)publish it.
+# With "create" ticked, the run makes a new tag at the commit it tested and built, once every
+# check has passed (cloud sessions cannot push tags). A tag made that way starts no other
+# runs, so start "Docker image" on the tag afterwards.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to (re)publish, e.g. v2.9.0. Leave empty for a trial build.
+        description: Tag to (re)publish, e.g. v2.9.0. Leave empty for a trial build.
         required: false
         default: ''
+      create:
+        description: Create this new tag at the commit being built, then publish
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -32,10 +39,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ (inputs.create && github.sha) || inputs.tag || github.ref }}
 
       - name: Check the version matches everywhere
         run: |
+          if [ "${{ inputs.create }}" = "true" ]; then
+            case "$TAG" in v[0-9]*) ;; *) echo "create needs a tag like v2.9.0"; exit 1 ;; esac
+            if [ -n "$(git ls-remote --tags origin "refs/tags/$TAG")" ]; then echo "$TAG already exists"; exit 1; fi
+          fi
           if [ -n "$TAG" ]; then
             VERSION="${TAG#v}"; PUBLISH=true
           else
@@ -107,6 +118,9 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$DMG" "$DMG.sha256" --clobber
             gh release edit "$TAG" --title "Multicam Studio $VERSION" --notes-file notes.md --latest
+          elif [ "${{ inputs.create }}" = "true" ]; then
+            gh release create "$TAG" "$DMG" "$DMG.sha256" --target "$GITHUB_SHA" --title "Multicam Studio $VERSION" \
+              --notes-file notes.md --latest
           else
             gh release create "$TAG" "$DMG" "$DMG.sha256" --verify-tag --title "Multicam Studio $VERSION" \
               --notes-file notes.md --latest
